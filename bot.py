@@ -14,9 +14,9 @@ def fetch_quiz_data():
     r = requests.get(DATA_URL, timeout=15)
     r.raise_for_status()
 
-    text = r.text.strip()
+    # ✅ BOM FIX
+    text = r.content.decode("utf-8-sig").strip()
 
-    # ✅ अगर doc में extra lines हों तो भी चल जाए
     data = json.loads(text)
 
     if not isinstance(data, list) or len(data) == 0:
@@ -43,10 +43,6 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     quiz_list = fetch_quiz_data()
     q = random.choice(quiz_list)
-
-    # ✅ validation
-    if "question" not in q or "options" not in q or "correct_index" not in q:
-        raise ValueError("❌ JSON format गलत है: question/options/correct_index missing")
 
     await context.bot.send_poll(
         chat_id=chat_id,
@@ -78,6 +74,7 @@ def main():
         raise ValueError("❌ BOT_TOKEN missing! Render Environment में set करो")
 
     app = Application.builder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(CommandHandler("quiz5", quiz5))
