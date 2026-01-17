@@ -9,12 +9,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Example: @mockrise
 
 DOC_ID = "1it0nkWpfm6OuOFrG7wQRR7ge9T67ToFb3z_VVEn3uiA"
 DATA_URL = f"https://docs.google.com/document/d/{DOC_ID}/export?format=txt"
 
 PORT = int(os.getenv("PORT", "10000"))
-
 MAX_SEND = 50
 
 # ✅ Flask server (Render port fix)
@@ -26,7 +26,6 @@ def home():
 
 def run_web():
     app_web.run(host="0.0.0.0", port=PORT)
-
 
 def fetch_quiz_data():
     r = requests.get(DATA_URL, timeout=15)
@@ -41,22 +40,20 @@ def fetch_quiz_data():
 
     return data
 
-
 def parse_range(args_text: str):
     args_text = args_text.strip()
 
-    # single number: "5"
+    # "5"
     if re.fullmatch(r"\d+", args_text):
         n = int(args_text)
         return n, n
 
-    # range: "1-10"
+    # "1-10"
     m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", args_text)
     if m:
         return int(m.group(1)), int(m.group(2))
 
     return None, None
-
 
 async def send_poll(chat_id, q, context: ContextTypes.DEFAULT_TYPE):
     qno = q.get("no", "")
@@ -73,91 +70,87 @@ async def send_poll(chat_id, q, context: ContextTypes.DEFAULT_TYPE):
         allows_multiple_answers=False
     )
 
+async def send_quiz_range(target_chat_id, context, start=None, end=None):
+    quiz_list = fetch_quiz_data()
+    total = len(quiz_list)
 
-# ✅ /check command
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        quiz_list = fetch_quiz_data()
-
-        total = len(quiz_list)
-        first_no = quiz_list[0].get("no", 1)
-        last_no = quiz_list[-1].get("no", total)
-
-        await update.message.reply_text(
-            "✅ Google Doc OK!\n"
-            f"📌 Total Questions: {total}\n"
-            f"🔢 First: Q{first_no}\n"
-            f"🔢 Last: Q{last_no}\n\n"
-            "✅ Use:\n"
-            "/quiz 1-10\n"
-            "/quiz 5\n"
-            "/quiz"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Check Error:\n{e}")
-
-
-# ✅ /quiz command
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        chat_id = update.effective_chat.id
-        quiz_list = fetch_quiz_data()
-        total = len(quiz_list)
-
-        # ✅ /quiz (all)
-        if not context.args:
-            send_list = quiz_list[:MAX_SEND]
-            await update.message.reply_text(f"✅ Total Questions: {total}\n✅ भेज रहा हूँ: {len(send_list)}")
-
-            for q in send_list:
-                if "question" not in q or "options" not in q or "correct_index" not in q:
-                    continue
-                await send_poll(chat_id, q, context)
-            return
-
-        # ✅ /quiz 1-10 OR /quiz 5
-        args_text = " ".join(context.args)
-        start, end = parse_range(args_text)
-
-        if start is None:
-            await update.message.reply_text(
-                "⚠️ सही format:\n"
-                "/quiz 1-10\n"
-                "/quiz 5\n"
-                "/quiz"
-            )
-            return
-
-        if start < 1 or end < 1:
-            await update.message.reply_text("⚠️ नंबर 1 से शुरू होते हैं।")
-            return
-
-        if start > end:
-            start, end = end, start
-
-        if start > total:
-            await update.message.reply_text(f"❌ अभी कुल Questions {total} हैं।")
-            return
-
-        if end > total:
-            end = total
-
-        selected = quiz_list[start - 1:end]
-
-        if len(selected) > MAX_SEND:
-            selected = selected[:MAX_SEND]
-            await update.message.reply_text(f"⚠️ एक बार में max {MAX_SEND} भेज सकता हूँ ✅")
-
-        await update.message.reply_text(f"✅ यहां रहे आपके क्वेश्चन: Q{start} से Q{end} तक ({len(selected)})")
-
+    # ✅ If no range => all
+    if start is None and end is None:
+        selected = quiz_list[:MAX_SEND]
         for q in selected:
             if "question" not in q or "options" not in q or "correct_index" not in q:
                 continue
-            await send_poll(chat_id, q, context)
+            await send_poll(target_chat_id, q, context)
+        return
+
+    # ✅ Range valid
+    if start < 1 or end < 1:
+        raise ValueError("नंबर 1 से शुरू होते हैं।")
+
+    if start > end:
+        start, end = end, start
+
+    if start > total:
+        raise ValueError(f"कुल Questions {total} हैं, लेकिन start {start} दिया है।")
+
+    if end > total:
+        end = total
+
+    selected = quiz_list[start - 1:end]
+
+    if len(selected) > MAX_SEND:
+        selected = selected[:MAX_SEND]
+
+    for q in selected:
+        if "question" not in q or "options" not in q or "correct_index" not in q:
+            continue
+        await send_poll(target_chat_id, q, context)
+
+# ✅ Normal: /quiz (अपने chat में)
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chat_id = update.effective_chat.id
+
+        if not context.args:
+            await update.message.reply_text("✅ आपके chat में Quiz भेज रहा हूँ...")
+            await send_quiz_range(chat_id, context)
+            return
+
+        args_text = " ".join(context.args)
+        start, end = parse_range(args_text)
+        if start is None:
+            await update.message.reply_text("⚠️ सही format:\n/quiz\n/quiz 1-10\n/quiz 5")
+            return
+
+        await update.message.reply_text(f"✅ आपके chat में Q{start}-Q{end} भेज रहा हूँ...")
+        await send_quiz_range(chat_id, context, start, end)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Quiz Error:\n{e}")
+        await update.message.reply_text(f"❌ Error:\n{e}")
 
+# ✅ Channel: /cquiz (channel में भेजेगा)
+async def cquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not CHANNEL_ID:
+            await update.message.reply_text("❌ Render में CHANNEL_ID set नहीं है।")
+            return
+
+        if not context.args:
+            await update.message.reply_text("✅ Channel में Quiz भेज रहा हूँ...")
+            await send_quiz_range(CHANNEL_ID, context)
+            return
+
+        args_text = " ".join(context.args)
+        start, end = parse_range(args_text)
+        if start is None:
+            await update.message.reply_text("⚠️ सही format:\n/cquiz\n/cquiz 1-10\n/cquiz 5")
+            return
+
+        await update.message.reply_text(f"✅ Channel में Q{start}-Q{end} भेज रहा हूँ...")
+        await send_quiz_range(CHANNEL_ID, context, start, end)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Channel Error:\n{e}")
 
 def main():
     if not TOKEN:
@@ -167,13 +160,11 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
-    # ✅ Commands
-    app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("quiz", quiz))
+    app.add_handler(CommandHandler("cquiz", cquiz))
 
     print("✅ Bot running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
