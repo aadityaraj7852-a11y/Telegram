@@ -27,6 +27,7 @@ def home():
 def run_web():
     app_web.run(host="0.0.0.0", port=PORT)
 
+
 def fetch_quiz_data():
     r = requests.get(DATA_URL, timeout=15)
     r.raise_for_status()
@@ -39,6 +40,7 @@ def fetch_quiz_data():
         raise ValueError("❌ Google Doc JSON खाली है")
 
     return data
+
 
 def parse_range(args_text: str):
     args_text = args_text.strip()
@@ -55,6 +57,7 @@ def parse_range(args_text: str):
 
     return None, None
 
+
 async def send_poll(chat_id, q, context: ContextTypes.DEFAULT_TYPE):
     qno = q.get("no", "")
     prefix = f"Q{qno}. " if qno != "" else ""
@@ -70,15 +73,41 @@ async def send_poll(chat_id, q, context: ContextTypes.DEFAULT_TYPE):
         allows_multiple_answers=False
     )
 
+
+# ✅ /check command
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        quiz_list = fetch_quiz_data()
+
+        total = len(quiz_list)
+        first_no = quiz_list[0].get("no", 1)
+        last_no = quiz_list[-1].get("no", total)
+
+        await update.message.reply_text(
+            "✅ Google Doc OK!\n"
+            f"📌 Total Questions: {total}\n"
+            f"🔢 First: Q{first_no}\n"
+            f"🔢 Last: Q{last_no}\n\n"
+            "✅ Use:\n"
+            "/quiz 1-10\n"
+            "/quiz 5\n"
+            "/quiz"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Check Error:\n{e}")
+
+
+# ✅ /quiz command
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = update.effective_chat.id
         quiz_list = fetch_quiz_data()
+        total = len(quiz_list)
 
         # ✅ /quiz (all)
         if not context.args:
             send_list = quiz_list[:MAX_SEND]
-            await update.message.reply_text(f"✅ कुल Questions: {len(quiz_list)}\n✅ भेज रहा हूँ: {len(send_list)}")
+            await update.message.reply_text(f"✅ Total Questions: {total}\n✅ भेज रहा हूँ: {len(send_list)}")
 
             for q in send_list:
                 if "question" not in q or "options" not in q or "correct_index" not in q:
@@ -106,7 +135,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if start > end:
             start, end = end, start
 
-        total = len(quiz_list)
         if start > total:
             await update.message.reply_text(f"❌ अभी कुल Questions {total} हैं।")
             return
@@ -120,7 +148,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             selected = selected[:MAX_SEND]
             await update.message.reply_text(f"⚠️ एक बार में max {MAX_SEND} भेज सकता हूँ ✅")
 
-        await update.message.reply_text(f"✅ भेज रहा हूँ: Q{start} से Q{end} तक ({len(selected)})")
+        await update.message.reply_text(f"✅ यहां रहे आपके क्वेश्चन: Q{start} से Q{end} तक ({len(selected)})")
 
         for q in selected:
             if "question" not in q or "options" not in q or "correct_index" not in q:
@@ -128,7 +156,8 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_poll(chat_id, q, context)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
+        await update.message.reply_text(f"❌ Quiz Error:\n{e}")
+
 
 def main():
     if not TOKEN:
@@ -137,10 +166,14 @@ def main():
     threading.Thread(target=run_web, daemon=True).start()
 
     app = Application.builder().token(TOKEN).build()
+
+    # ✅ Commands
+    app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("quiz", quiz))
 
     print("✅ Bot running...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
