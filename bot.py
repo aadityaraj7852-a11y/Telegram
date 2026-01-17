@@ -1,27 +1,23 @@
 import os
 import json
-import random
 import requests
 import threading
+import re
 from flask import Flask
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ======================
-# ENV
-# ======================
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # Example: @mockrise
 
 DOC_ID = "1it0nkWpfm6OuOFrG7wQRR7ge9T67ToFb3z_VVEn3uiA"
 DATA_URL = f"https://docs.google.com/document/d/{DOC_ID}/export?format=txt"
 
 PORT = int(os.getenv("PORT", "10000"))
 
-# ======================
-# Flask Server (Render port open)
-# ======================
+MAX_SEND = 50
+
+# ✅ Flask server (Render port fix)
 app_web = Flask(__name__)
 
 @app_web.get("/")
@@ -31,9 +27,6 @@ def home():
 def run_web():
     app_web.run(host="0.0.0.0", port=PORT)
 
-# ======================
-# Google Doc JSON (BOM Fix)
-# ======================
 def fetch_quiz_data():
     r = requests.get(DATA_URL, timeout=15)
     r.raise_for_status()
@@ -43,88 +36,108 @@ def fetch_quiz_data():
     data = json.loads(text)
 
     if not isinstance(data, list) or len(data) == 0:
-        raise ValueError("❌ Quiz JSON list खाली है")
+        raise ValueError("❌ Google Doc JSON खाली है")
 
     return data
 
-async def send_quiz_to(chat_id, context: ContextTypes.DEFAULT_TYPE):
-    quiz_list = fetch_quiz_data()
-    q = random.choice(quiz_list)
+def parse_range(args_text: str):
+    args_text = args_text.strip()
+
+    # single number: "5"
+    if re.fullmatch(r"\d+", args_text):
+        n = int(args_text)
+        return n, n
+
+    # range: "1-10"
+    m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", args_text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    return None, None
+
+async def send_poll(chat_id, q, context: ContextTypes.DEFAULT_TYPE):
+    qno = q.get("no", "")
+    prefix = f"Q{qno}. " if qno != "" else ""
 
     await context.bot.send_poll(
         chat_id=chat_id,
-        question=q["question"],
+        question=prefix + q["question"],
         options=q["options"],
         type="quiz",
         correct_option_id=int(q["correct_index"]),
         explanation=q.get("explanation", ""),
-        is_anonymous=True
+        is_anonymous=True,
+        allows_multiple_answers=False
     )
-
-# ======================
-# Auto job: हर 20 मिनट
-# ======================
-async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
-    if not CHANNEL_ID:
-        return
-    try:
-        await send_quiz_to(CHANNEL_ID, context)
-        print("✅ Auto quiz sent to channel")
-    except Exception as e:
-        print("❌ Auto quiz error:", e)
-
-# ======================
-# Commands
-# ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "✅ Bot चालू है!\n\n"
-        "Commands:\n"
-        "/quiz - 1 Quiz Poll\n"
-        "/quiz5 - 5 Quiz Poll\n"
-        "/check - Doc test\n\n"
-        "✅ Auto: हर 20 मिनट में channel पर quiz (अगर CHANNEL_ID सेट है)"
-    )
-
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        quiz_list = fetch_quiz_data()
-        await update.message.reply_text(f"✅ Google Doc OK! कुल Questions: {len(quiz_list)}")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Google Doc Error:\n{e}")
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await send_quiz_to(update.effective_chat.id, context)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Quiz Error:\n{e}")
+        chat_id = update.effective_chat.id
+        quiz_list = fetch_quiz_data()
 
-async def quiz5(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        for _ in range(5):
-            await send_quiz_to(update.effective_chat.id, context)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Quiz5 Error:\n{e}")
+        # ✅ /quiz (all)
+        if not context.args:
+            send_list = quiz_list[:MAX_SEND]
+            await update.message.reply_text(f"✅ कुल Questions: {len(quiz_list)}\n✅ भेज रहा हूँ: {len(send_list)}")
 
-# ======================
-# Main
-# ======================
+            for q in send_list:
+                if "question" not in q or "options" not in q or "correct_index" not in q:
+                    continue
+                await send_poll(chat_id, q, context)
+            return
+
+        # ✅ /quiz 1-10 OR /quiz 5
+        args_text = " ".join(context.args)
+        start, end = parse_range(args_text)
+
+        if start is None:
+            await update.message.reply_text(
+                "⚠️ सही format:\n"
+                "/quiz 1-10\n"
+                "/quiz 5\n"
+                "/quiz"
+            )
+            return
+
+        if start < 1 or end < 1:
+            await update.message.reply_text("⚠️ नंबर 1 से शुरू होते हैं।")
+            return
+
+        if start > end:
+            start, end = end, start
+
+        total = len(quiz_list)
+        if start > total:
+            await update.message.reply_text(f"❌ अभी कुल Questions {total} हैं।")
+            return
+
+        if end > total:
+            end = total
+
+        selected = quiz_list[start - 1:end]
+
+        if len(selected) > MAX_SEND:
+            selected = selected[:MAX_SEND]
+            await update.message.reply_text(f"⚠️ एक बार में max {MAX_SEND} भेज सकता हूँ ✅")
+
+        await update.message.reply_text(f"✅ भेज रहा हूँ: Q{start} से Q{end} तक ({len(selected)})")
+
+        for q in selected:
+            if "question" not in q or "options" not in q or "correct_index" not in q:
+                continue
+            await send_poll(chat_id, q, context)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error:\n{e}")
+
 def main():
     if not TOKEN:
-        raise ValueError("❌ BOT_TOKEN missing!")
+        raise ValueError("❌ BOT_TOKEN missing! Render Environment में set करो")
 
-    # ✅ Render के लिए Web server start
     threading.Thread(target=run_web, daemon=True).start()
 
     app = Application.builder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(CommandHandler("quiz5", quiz5))
-
-    # ✅ हर 20 मिनट
-    app.job_queue.run_repeating(auto_quiz_job, interval=1200, first=30)
 
     print("✅ Bot running...")
     app.run_polling()
