@@ -9,21 +9,18 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # ======================
-# ✅ ENV
+# ENV
 # ======================
 TOKEN = os.getenv("BOT_TOKEN")
-
-# ✅ Channel में auto post चाहिए तो
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # Example: @mockrise OR -100xxxxxxxxxx
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Example: @mockrise
 
 DOC_ID = "1it0nkWpfm6OuOFrG7wQRR7ge9T67ToFb3z_VVEn3uiA"
 DATA_URL = f"https://docs.google.com/document/d/{DOC_ID}/export?format=txt"
 
-# Render assigns PORT automatically
 PORT = int(os.getenv("PORT", "10000"))
 
 # ======================
-# ✅ Flask Health Server (Render port scan fix)
+# Flask Server (Render port open)
 # ======================
 app_web = Flask(__name__)
 
@@ -35,15 +32,14 @@ def run_web():
     app_web.run(host="0.0.0.0", port=PORT)
 
 # ======================
-# ✅ Quiz Data Fetch (BOM Fix)
+# Google Doc JSON (BOM Fix)
 # ======================
 def fetch_quiz_data():
     r = requests.get(DATA_URL, timeout=15)
     r.raise_for_status()
 
-    # ✅ BOM FIX (सबसे जरूरी)
+    # ✅ BOM FIX
     text = r.content.decode("utf-8-sig").strip()
-
     data = json.loads(text)
 
     if not isinstance(data, list) or len(data) == 0:
@@ -62,34 +58,32 @@ async def send_quiz_to(chat_id, context: ContextTypes.DEFAULT_TYPE):
         type="quiz",
         correct_option_id=int(q["correct_index"]),
         explanation=q.get("explanation", ""),
-        is_anonymous=True,
-        allows_multiple_answers=False
+        is_anonymous=True
     )
 
 # ======================
-# ✅ Auto Job (20 minutes)
+# Auto job: हर 20 मिनट
 # ======================
 async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
     if not CHANNEL_ID:
         return
-
     try:
         await send_quiz_to(CHANNEL_ID, context)
-        print("✅ Auto quiz sent!")
+        print("✅ Auto quiz sent to channel")
     except Exception as e:
         print("❌ Auto quiz error:", e)
 
 # ======================
-# ✅ Commands
+# Commands
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "✅ Rajasthan GK Quiz Bot चालू है!\n\n"
+        "✅ Bot चालू है!\n\n"
         "Commands:\n"
         "/quiz - 1 Quiz Poll\n"
         "/quiz5 - 5 Quiz Poll\n"
-        "/check - Google Doc JSON test\n\n"
-        "✅ Auto Mode: हर 20 मिनट में Channel पर 1 MCQ (अगर CHANNEL_ID सेट है)"
+        "/check - Doc test\n\n"
+        "✅ Auto: हर 20 मिनट में channel पर quiz (अगर CHANNEL_ID सेट है)"
     )
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,27 +107,26 @@ async def quiz5(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Quiz5 Error:\n{e}")
 
 # ======================
-# ✅ Main
+# Main
 # ======================
 def main():
     if not TOKEN:
-        raise ValueError("❌ BOT_TOKEN missing! Render Environment में set करो")
+        raise ValueError("❌ BOT_TOKEN missing!")
 
-    # ✅ Web server thread start (port scan fix)
+    # ✅ Render के लिए Web server start
     threading.Thread(target=run_web, daemon=True).start()
 
     app = Application.builder().token(TOKEN).build()
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(CommandHandler("quiz5", quiz5))
 
-    # ✅ हर 20 मिनट = 1200 sec
-    app.job_queue.run_repeating(auto_quiz_job, interval=1200, first=20)
+    # ✅ हर 20 मिनट
+    app.job_queue.run_repeating(auto_quiz_job, interval=1200, first=30)
 
-    print("✅ Bot Running...")
+    print("✅ Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
