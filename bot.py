@@ -3,7 +3,6 @@ import json
 import requests
 import threading
 import re
-import random
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask
@@ -17,11 +16,9 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # ======================
 TOKEN = os.getenv("BOT_TOKEN")
 
-# 👇 MOCKRISE channel (old)
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # @mockrise
+CHANNEL_ID = os.getenv("CHANNEL_ID")   # Mockrise
+UPSC_ID = "@upsc_hindi_quizz"          # UPSC channel direct
 
-# 👇 UPSC channel (NEW)
-UPPSC_GROUP_ID = "@upsc_hindi_quizz"   # ✅ direct set (no env needed)
 
 DOC_ID = "1it0nkWpfm6OuOFrG7wQRR7ge9T67ToFb3z_VVEn3uiA"
 DATA_URL = f"https://docs.google.com/document/d/{DOC_ID}/export?format=txt"
@@ -30,37 +27,15 @@ PORT = int(os.getenv("PORT", "10000"))
 
 
 # ======================
-# ✅ Custom Prompts
+# ✅ Prompts
 # ======================
 MOCKRISE_PROMPT = "🔥 Mockrise Daily Quiz\nतैयारी जारी रखो 💪"
 UPSC_PROMPT = "🇮🇳 UPSC Hindi Quiz\nआज का सवाल — दिमाग लगाओ 🧠"
+PERSONAL_PROMPT = "📘 Practice Quiz"
 
 
 # ======================
-# ✅ Limits
-# ======================
-MAX_SEND = 50
-
-
-# ======================
-# ✅ Timing
-# ======================
-IST = ZoneInfo("Asia/Kolkata")
-AUTO_START_HOUR = 5
-AUTO_END_HOUR = 23
-AUTO_INTERVAL_SECONDS = 1800
-
-
-# ======================
-# ✅ Repeat Control
-# ======================
-SENT_STATE_FILE = "/tmp/sent_state.json"
-sent_indexes = set()
-sent_date_str = None
-
-
-# ======================
-# ✅ Flask
+# ✅ Flask keep alive
 # ======================
 app_web = Flask(__name__)
 
@@ -75,30 +50,12 @@ def run_web():
 # ======================
 # ✅ Helpers
 # ======================
+IST = ZoneInfo("Asia/Kolkata")
+
 def now_ist():
     return datetime.now(IST)
 
 
-def in_auto_time_window():
-    t = now_ist()
-    return AUTO_START_HOUR <= t.hour < AUTO_END_HOUR
-
-
-def get_targets():
-    targets = []
-
-    if CHANNEL_ID:
-        targets.append((CHANNEL_ID, MOCKRISE_PROMPT))
-
-    if UPPSC_GROUP_ID:
-        targets.append((UPPSC_GROUP_ID, UPSC_PROMPT))
-
-    return targets
-
-
-# ======================
-# ✅ Fetch Quiz
-# ======================
 def fetch_quiz_data():
     r = requests.get(DATA_URL, timeout=15)
     r.raise_for_status()
@@ -106,12 +63,14 @@ def fetch_quiz_data():
     return json.loads(text)
 
 
-def parse_range(args_text):
-    if re.fullmatch(r"\d+", args_text):
-        n = int(args_text)
+def parse_range(text):
+    text = text.strip()
+
+    if re.fullmatch(r"\d+", text):
+        n = int(text)
         return n, n
 
-    m = re.fullmatch(r"(\d+)-(\d+)", args_text)
+    m = re.fullmatch(r"(\d+)-(\d+)", text)
     if m:
         return int(m.group(1)), int(m.group(2))
 
@@ -125,7 +84,6 @@ async def send_poll(chat_id, prompt, q, context):
     qno = q.get("no", "")
     prefix = f"Q{qno}. " if qno else ""
 
-    # 👇 custom intro message
     await context.bot.send_message(chat_id, prompt)
 
     await context.bot.send_poll(
@@ -138,67 +96,79 @@ async def send_poll(chat_id, prompt, q, context):
     )
 
 
-async def send_to_all_targets(q, context):
-    for chat_id, prompt in get_targets():
-        await send_poll(chat_id, prompt, q, context)
-
-
-# ======================
-# ✅ Range Sender
-# ======================
-async def send_quiz_range(target_chat_id, context, start=None, end=None):
+async def send_range(chat_id, prompt, context, start=None, end=None):
     quiz_list = fetch_quiz_data()
 
     if start is None:
-        selected = quiz_list[:MAX_SEND]
+        selected = quiz_list
     else:
         selected = quiz_list[start-1:end]
 
     for q in selected:
-        await send_poll(target_chat_id, "📘 Practice Quiz", q, context)
+        await send_poll(chat_id, prompt, q, context)
 
 
 # ======================
-# ✅ Commands
+# ✅ /check
+# ======================
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    total = len(fetch_quiz_data())
+
+    await update.message.reply_text(
+        "✅ BOT STATUS OK\n\n"
+        f"📌 Total Questions: {total}\n"
+        f"⏰ IST Time: {now_ist().strftime('%I:%M %p')}\n\n"
+        "Commands:\n"
+        "/quiz → personal\n"
+        "/mockrise → channel\n"
+        "/upsc → upsc channel"
+    )
+
+
+# ======================
+# ✅ Personal Quiz
 # ======================
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     if not context.args:
-        await send_quiz_range(chat_id, context)
+        await send_range(chat_id, PERSONAL_PROMPT, context)
         return
 
     start, end = parse_range(" ".join(context.args))
-    await send_quiz_range(chat_id, context, start, end)
-
-
-# 👇 Channel + UPSC
-async def cquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    quiz_list = fetch_quiz_data()
-
-    if not context.args:
-        selected = quiz_list[:MAX_SEND]
-    else:
-        start, end = parse_range(" ".join(context.args))
-        selected = quiz_list[start-1:end]
-
-    for q in selected:
-        await send_to_all_targets(q, context)
+    await send_range(chat_id, PERSONAL_PROMPT, context, start, end)
 
 
 # ======================
-# ✅ AUTO JOB
+# ✅ Mockrise Channel Only
 # ======================
-async def auto_quiz_job(context: ContextTypes.DEFAULT_TYPE):
-    if not in_auto_time_window():
+async def mockrise(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not CHANNEL_ID:
+        await update.message.reply_text("❌ CHANNEL_ID set नहीं है")
         return
 
-    quiz_list = fetch_quiz_data()
-    q = random.choice(quiz_list)
+    if not context.args:
+        await send_range(CHANNEL_ID, MOCKRISE_PROMPT, context)
+        return
 
-    await send_to_all_targets(q, context)
+    start, end = parse_range(" ".join(context.args))
+    await send_range(CHANNEL_ID, MOCKRISE_PROMPT, context, start, end)
 
-    print("Auto sent")
+
+# ======================
+# ✅ UPSC Channel Only
+# ======================
+async def upsc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not UPSC_ID:
+        await update.message.reply_text("❌ UPSC channel missing")
+        return
+
+    if not context.args:
+        await send_range(UPSC_ID, UPSC_PROMPT, context)
+        return
+
+    start, end = parse_range(" ".join(context.args))
+    await send_range(UPSC_ID, UPSC_PROMPT, context, start, end)
 
 
 # ======================
@@ -209,11 +179,12 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(CommandHandler("cquiz", cquiz))
+    app.add_handler(CommandHandler("mockrise", mockrise))
+    app.add_handler(CommandHandler("upsc", upsc))
 
-    app.job_queue.run_repeating(auto_quiz_job, interval=AUTO_INTERVAL_SECONDS, first=60)
-
+    print("✅ Manual Bot Running (No Auto Mode)")
     app.run_polling()
 
 
