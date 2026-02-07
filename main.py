@@ -1,6 +1,7 @@
 import telebot
 import json
 import time
+import os  # पोर्ट के लिए जरूरी
 from flask import Flask
 from threading import Thread
 
@@ -8,37 +9,35 @@ from threading import Thread
 BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 CHANNEL_ID = "@mockrise"
 
-# -------- 1. KEEP ALIVE SERVER --------
+# -------- 1. KEEP ALIVE SERVER (Fixed for Render) --------
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is alive!"
+    return "Bot is alive and running!"
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    # Render हमेशा PORT एन्वायरमेंट वेरिएबल का इस्तेमाल करता है, डिफ़ॉल्ट 10000
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run)
+    t.daemon = True # इसे daemon बनाने से मेन प्रोग्राम के साथ बंद होगा
     t.start()
 
 # -------- 2. TELEGRAM BOT --------
 bot = telebot.TeleBot(BOT_TOKEN)
 
-print("Bot is running...")
-
 @bot.message_handler(content_types=['text'])
 def handle_json(message):
     try:
         data = json.loads(message.text)
-
         if not isinstance(data, list):
             bot.reply_to(message, "❌ Error: JSON लिस्ट [] से शुरू होना चाहिए।")
             return
 
-        # READY MESSAGE
         bot.reply_to(message, "🤖 Bot ready hai quiz ke liye...\n⏳ Quiz start ho raha hai...")
-
         success_count = 0
 
         for i, item in enumerate(data):
@@ -51,9 +50,9 @@ def handle_json(message):
                 if not question_text or not options or correct_id is None:
                     continue
 
-                # Question जैसा है वैसा ही जाएगा
                 poll_question = question_text
-
+                
+                # एक्सप्लेनेशन की लिमिट 200 कैरेक्टर होती है
                 if len(original_explanation) > 190:
                     poll_explanation = "विस्तृत व्याख्या नीचे देखें 👇"
                     send_full_explanation = True
@@ -79,11 +78,10 @@ def handle_json(message):
                     )
 
                 success_count += 1
-                time.sleep(3)
+                time.sleep(3) # रेट लिमिट से बचने के लिए
 
             except Exception as e:
-                error_msg = str(e)
-                bot.reply_to(message, f"⚠️ Question {i+1} में एरर: {error_msg[:100]}")
+                bot.reply_to(message, f"⚠️ Question {i+1} में एरर: {str(e)[:100]}")
 
         bot.reply_to(message, f"✅ काम पूरा! {success_count} प्रश्न भेज दिए गए।")
 
@@ -93,6 +91,7 @@ def handle_json(message):
         bot.reply_to(message, f"❌ बड़ी त्रुटि: {e}")
 
 # -------- 3. BOT START --------
-keep_alive()
-print("Bot is running...")
-bot.infinity_polling()
+if __name__ == "__main__":
+    keep_alive() # पहले वेब सर्वर शुरू करें
+    print("Bot is starting...")
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
