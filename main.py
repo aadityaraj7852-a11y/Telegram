@@ -1,114 +1,98 @@
+import telebot
+import json
+import time
 from flask import Flask
-import threading
-from telethon import TelegramClient, events
-import asyncio
-import os
+from threading import Thread
 
-# --- Render के लिए Fake Web Server ---
+# --- अपनी डीटेल्स यहाँ डालें ---
+BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
+CHANNEL_ID = "@mockrise"
+
+# -------- 1. KEEP ALIVE SERVER --------
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is running 24/7!"
+    return "Bot is alive!"
 
 def run():
-    # Render डिफ़ॉल्ट रूप से पोर्ट 10000 का उपयोग करता है
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    t = threading.Thread(target=run)
-    t.daemon = True
+    t = Thread(target=run)
     t.start()
 
-# --- आपके टेलीग्राम क्रेडेंशियल्स ---
-api_id = 22921981
-api_hash = '9af5a5e1f22e2c5b82f66083e70ec9db'
-bot_token = '7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok'
+# -------- 2. TELEGRAM BOT --------
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# क्लाइंट सेटअप
-client = TelegramClient('forwarder_session', api_id, api_hash)
+print("Bot is running...")
 
-# सेटिंग्स स्टोर करने के लिए
-config = {
-    "source": None,
-    "target": None,
-    "filters": [],
-    "active": False
-}
+@bot.message_handler(content_types=['text'])
+def handle_json(message):
+    try:
+        data = json.loads(message.text)
 
-async def bot_logic():
-    # बॉट लॉगिन
-    await client.start(bot_token=bot_token)
-    print("बॉट सफलतापूर्वक लॉगिन हो गया है!")
-
-    # --- कमांड्स ---
-
-    @client.on(events.NewMessage(pattern='/start'))
-    async def start(event):
-        await event.respond(
-            "🚀 **Forwarder Control Bot**\n\n"
-            "1️⃣ `/source @username` - सोर्स चैनल\n"
-            "2️⃣ `/target @username` - टारगेट ग्रुप\n"
-            "3️⃣ `/filter शब्द` - शब्द रोकें\n"
-            "4️⃣ `/config` - सेटिंग्स देखें\n"
-            "5️⃣ `/finish` - शुरू करें\n"
-            "6️⃣ `/stop` - रोकें"
-        )
-
-    @client.on(events.NewMessage(pattern='/source (.*)'))
-    async def set_source(event):
-        config["source"] = event.pattern_match.group(1).strip()
-        await event.respond(f"✅ Source सेट: {config['source']}")
-
-    @client.on(events.NewMessage(pattern='/target (.*)'))
-    async def set_target(event):
-        config["target"] = event.pattern_match.group(1).strip()
-        await event.respond(f"✅ Target सेट: {config['target']}")
-
-    @client.on(events.NewMessage(pattern='/filter (.*)'))
-    async def add_filter(event):
-        word = event.pattern_match.group(1).strip().lower()
-        config["filters"].append(word)
-        await event.respond(f"➕ Filter जोड़ा गया: {word}")
-
-    @client.on(events.NewMessage(pattern='/config'))
-    async def show_config(event):
-        status = "▶️ Active" if config["active"] else "⏸ Stopped"
-        msg = (f"⚙️ **Settings:**\nStatus: {status}\nSource: {config['source']}\nTarget: {config['target']}")
-        await event.respond(msg)
-
-    @client.on(events.NewMessage(pattern='/finish'))
-    async def finish(event):
-        if not config["source"] or not config["target"]:
-            await event.respond("❌ पहले source और target सेट करें!")
+        if not isinstance(data, list):
+            bot.reply_to(message, "❌ Error: JSON लिस्ट [] से शुरू होना चाहिए।")
             return
-        config["active"] = True
-        await event.respond("🚀 फॉरवर्डिंग शुरू!")
 
-    @client.on(events.NewMessage(pattern='/stop'))
-    async def stop(event):
-        config["active"] = False
-        await event.respond("🛑 फॉरवर्डिंग बंद!")
+        # READY MESSAGE
+        bot.reply_to(message, "🤖 Bot ready hai quiz ke liye...\n⏳ Quiz start ho raha hai...")
 
-    # --- फॉरवर्डिंग लॉजिक ---
-    @client.on(events.NewMessage)
-    async def forwarder_handler(event):
-        if not config["active"] or not config["source"]:
-            return
-        
-        try:
-            source_entity = await client.get_entity(config["source"])
-            if event.chat_id == source_entity.id:
-                text = (event.message.message or "").lower()
-                for word in config["filters"]:
-                    if word in text:
-                        return
-                await client.forward_messages(config["target"], event.message)
-        except Exception as e:
-            print(f"Error: {e}")
+        success_count = 0
 
-    await client.run_until_disconnected()
+        for i, item in enumerate(data):
+            try:
+                question_text = item.get("question", "").strip()
+                options = item.get("options", [])
+                correct_id = item.get("correct_index")
+                original_explanation = item.get("explanation", "").strip()
 
-if __name__ == '__main__':
-    keep_alive() # Flask सर्वर शुरू करें
-    asyncio.run(bot_logic()) # बॉट शुरू करें
+                if not question_text or not options or correct_id is None:
+                    continue
+
+                # Question जैसा है वैसा ही जाएगा
+                poll_question = question_text
+
+                if len(original_explanation) > 190:
+                    poll_explanation = "विस्तृत व्याख्या नीचे देखें 👇"
+                    send_full_explanation = True
+                else:
+                    poll_explanation = original_explanation
+                    send_full_explanation = False
+
+                sent_poll = bot.send_poll(
+                    chat_id=CHANNEL_ID,
+                    question=poll_question,
+                    options=options,
+                    type='quiz',
+                    correct_option_id=correct_id,
+                    explanation=poll_explanation,
+                    is_anonymous=True
+                )
+
+                if send_full_explanation:
+                    bot.send_message(
+                        CHANNEL_ID,
+                        f"📝 Solution:\n{original_explanation}",
+                        reply_to_message_id=sent_poll.message_id
+                    )
+
+                success_count += 1
+                time.sleep(3)
+
+            except Exception as e:
+                error_msg = str(e)
+                bot.reply_to(message, f"⚠️ Question {i+1} में एरर: {error_msg[:100]}")
+
+        bot.reply_to(message, f"✅ काम पूरा! {success_count} प्रश्न भेज दिए गए।")
+
+    except json.JSONDecodeError:
+        bot.reply_to(message, "❌ JSON फॉर्मेट गलत है।")
+    except Exception as e:
+        bot.reply_to(message, f"❌ बड़ी त्रुटि: {e}")
+
+# -------- 3. BOT START --------
+keep_alive()
+print("Bot is running...")
+bot.infinity_polling()
