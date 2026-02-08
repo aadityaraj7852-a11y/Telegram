@@ -12,7 +12,7 @@ CHANNEL_ID = "@mockrise"
 app = Flask('')
 
 @app.route('/')
-def home()  :
+def home():
     return "Bot is alive!"
 
 def run():
