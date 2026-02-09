@@ -25,7 +25,7 @@ def help_command(update, context):
 
 def generate_pdf(update, context):
     # Logic for PDF generation
-    update.message.reply_text('PDF जनरेटिंग ��्रक्रिया शुरू है...')
+    update.message.reply_text('PDF जनरेटिंग प्रक्रिया शुरू है...')
 
 # Main function to set up the bot
 
