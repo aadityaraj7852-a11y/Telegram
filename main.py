@@ -42,7 +42,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running with Premium PDF Engine!"
+    return "✅ Bot is Running with Custom UI!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -89,11 +89,11 @@ def update_stats(user_id, channel, count, status):
     save_json(DB_STATS, stats)
 
 # ==========================================
-# 📄 PDF ENGINE (PREMIUM HTML TEMPLATE)
+# 📄 PDF ENGINE (CUSTOM UI TEMPLATE)
 # ==========================================
 
 def check_font():
-    """Downloads Hindi font for Server."""
+    """Downloads Hindi font."""
     if not os.path.exists(FONT_FILE):
         print("📥 Downloading Hindi Font...")
         url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
@@ -107,138 +107,168 @@ def check_font():
 def generate_pdf_html(data_list, filename, title_text):
     font_path = check_font()
     
-    # 🎨 PREMIUM HTML TEMPLATE
+    # 🎨 YOUR CUSTOM HTML TEMPLATE
     html_template = """
     <!DOCTYPE html>
     <html lang="hi">
     <head>
-        <meta charset="UTF-8">
-        <style>
-            @font-face {
-                font-family: 'Noto Sans Devanagari';
-                src: url('file://{{ font_path }}');
-            }
-            
-            @page {
-                margin: 20mm 15mm; /* Reduced margins: Top/Bottom 20mm, Left/Right 15mm */
-                size: A4;
-                @bottom-center {
-                    content: "Page " counter(page) " of " counter(pages);
-                    font-size: 9pt;
-                    color: #666;
-                    margin-top: 10px;
-                }
-            }
+    <meta charset="UTF-8">
+    <style>
+        @font-face {
+            font-family: 'Noto Sans Devanagari';
+            src: url('file://{{ font_path }}');
+        }
 
-            body {
-                font-family: 'Noto Sans Devanagari', sans-serif;
-                font-size: 11pt;
-                line-height: 1.5;
-                color: #222;
-                margin: 0;
-            }
+        @page {
+            size: A4;
+            margin: 20mm 15mm;
 
-            .header {
-                background: linear-gradient(135deg, #1565c0, #0d47a1); /* Premium Blue Gradient */
-                color: white;
-                padding: 18px;
-                border-radius: 6px;
-                margin-bottom: 25px;
-                text-align: center;
-                box-shadow: 0 3px 5px rgba(0,0,0,0.1);
-            }
-            .header h1 { margin: 0; font-size: 22pt; font-weight: bold; }
-            .header p { margin: 8px 0 0; font-size: 10pt; opacity: 0.9; }
-            
-            .meta {
-                display: flex;
-                justify-content: space-between;
-                border-bottom: 2px solid #e0e0e0;
-                padding-bottom: 10px;
-                margin-bottom: 25px;
-                font-weight: 600;
-                color: #444;
+            /* Footer page number circle */
+            @bottom-center {
+                content: counter(page);
+                background: #e0e0e0;
+                border-radius: 50%;
+                padding: 6px 12px;
                 font-size: 10pt;
-            }
-            
-            .question-block {
-                margin-bottom: 30px;
-                page-break-inside: avoid;
-            }
-            
-            .q-num { color: #1565c0; font-weight: bold; font-size: 12pt; margin-right: 5px; }
-            .q-text { font-weight: 600; font-size: 12pt; display: inline; }
-            
-            .options { margin-left: 25px; margin-top: 12px; margin-bottom: 15px; }
-            .option { margin-bottom: 8px; display: flex; align-items: baseline; }
-            .opt-label { font-weight: bold; color: #555; margin-right: 10px; min-width: 25px; }
-            
-            /* --- Premium Solution Box --- */
-            .solution-box {
-                background-color: #f1f8e9; /* Very Light Green */
-                border-left: 4px solid #43a047; /* Strong Green Border */
-                padding: 12px 15px;
-                border-radius: 4px;
-                margin-top: 10px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            }
-            .ans-section {
                 font-weight: bold;
-                color: #2e7d32;
-                margin-bottom: 6px;
-                font-size: 11pt;
             }
-            .exp-section { color: #333; display: flex; }
-            .exp-label { font-weight: bold; color: #1565c0; margin-right: 8px; min-width: 55px;}
-            .exp-text { font-size: 10.5pt; }
+        }
 
-            hr { border: 0; border-top: 1px solid #eee; margin: 25px 0; }
-        </style>
+        body {
+            font-family: "Noto Sans Devanagari", sans-serif;
+            font-size: 11pt;
+            color: #222;
+            margin: 0;
+        }
+
+        /* Header layout */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        /* Logo spacing */
+        .logo img {
+            width: 70px;
+            height: auto;
+            margin-right: 15px;
+        }
+
+        /* Title */
+        .title {
+            text-align: center;
+            flex-grow: 1;
+        }
+
+        .title h1 {
+            margin: 0;
+            font-size: 18pt;
+            color: #000;
+        }
+
+        .title p {
+            margin: 3px 0;
+            font-size: 10pt;
+            color: #555;
+        }
+
+        /* Meta row */
+        .meta {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 10pt;
+            margin-top: 15px;
+            color: #333;
+        }
+
+        /* Line */
+        .top-line {
+            border-bottom: 2px solid black;
+            margin: 8px 0 20px 0;
+        }
+
+        /* Question style */
+        .question-block {
+            margin-bottom: 25px;
+            page-break-inside: avoid;
+        }
+
+        .q-text {
+            font-weight: bold;
+            font-size: 11pt;
+            margin-bottom: 5px;
+        }
+
+        .options {
+            margin-left: 20px;
+            margin-top: 8px;
+        }
+
+        .option {
+            margin-bottom: 4px;
+        }
+
+        .solution-box {
+            border: 2px solid #333;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            background-color: #fff;
+        }
+
+        .answer {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #000;
+        }
+    </style>
     </head>
+
     <body>
-        <div class="header">
+
+    <div class="header">
+        <div class="logo">
+            <img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg">
+        </div>
+
+        <div class="title">
             <h1>{{ title }}</h1>
-            <p>@MockRise Telegram Channel | Premium Exam Series</p>
+            <p>@MockRise Telegram Channel</p>
+        </div>
+
+        <div style="width:70px;"></div> </div>
+
+    <div class="meta">
+        <div>Generated Date: {{ date }}</div>
+        <div>Total Questions: {{ total }}</div>
+    </div>
+
+    <div class="top-line"></div>
+
+    {% for item in items %}
+    <div class="question-block">
+        <div class="q-text">Q{{ loop.index }}. {{ item.data.question }}</div>
+        
+        <div class="options">
+            {% set labels = ['(A)', '(B)', '(C)', '(D)'] %}
+            {% for opt in item.data.options %}
+                <div class="option">
+                    {{ labels[loop.index0] if loop.index0 < 4 else loop.index }} {{ opt }}
+                </div>
+            {% endfor %}
         </div>
         
-        <div class="meta">
-            <span>📅 Date: {{ date }}</span>
-            <span>🔢 Total Questions: {{ total }}</span>
+        <div class="solution-box">
+            {% set ans_idx = item.data.correct_index %}
+            <div class="answer">उत्तर: ({{ labels[ans_idx] if ans_idx < 4 else ans_idx+1 }})</div>
+            {{ item.data.explanation }}
         </div>
+    </div>
+    {% endfor %}
 
-        {% for item in items %}
-        <div class="question-block">
-            <div>
-                <span class="q-num">Q{{ loop.index }}.</span>
-                <div class="q-text">{{ item.data.question }}</div>
-            </div>
-            
-            <div class="options">
-                {% set labels = ['(A)', '(B)', '(C)', '(D)'] %}
-                {% for opt in item.data.options %}
-                    <div class="option">
-                        <span class="opt-label">{{ labels[loop.index0] if loop.index0 < 4 else loop.index }}</span>
-                        <span>{{ opt }}</span>
-                    </div>
-                {% endfor %}
-            </div>
-            
-            <div class="solution-box">
-                {% set ans_idx = item.data.correct_index %}
-                {% set ans_labels = ['A', 'B', 'C', 'D'] %}
-                <div class="ans-section">
-                    ✅ सही उत्तर: ({{ ans_labels[ans_idx] if ans_idx < 4 else ans_idx+1 }})
-                </div>
-                {% if item.data.explanation %}
-                <div class="exp-section">
-                    <span class="exp-label">💡 व्याख्या:</span>
-                    <div class="exp-text">{{ item.data.explanation }}</div>
-                </div>
-                {% endif %}
-            </div>
-        </div>
-        {% if not loop.last %}<hr>{% endif %}
-        {% endfor %}
     </body>
     </html>
     """
@@ -254,17 +284,11 @@ def generate_pdf_html(data_list, filename, title_text):
     )
     
     try:
-        # Use base_url="." to resolve local file paths for fonts
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
     except Exception as e:
         print(f"PDF Error: {e}")
-        # Fallback to a simpler call if base_url fails on some setups
-        try:
-            HTML(string=rendered_html).write_pdf(filename)
-            return filename
-        except:
-            return None
+        return None
 
 # ==========================================
 # 🎮 COMMANDS
@@ -272,7 +296,7 @@ def generate_pdf_html(data_list, filename, title_text):
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "🤖 Premium PDF Bot Started! Send JSON to begin.")
+    bot.reply_to(message, "🤖 UI Updated! Send JSON to generate PDF.")
 
 # --- CHANNELS SENDING LOGIC ---
 def process_send(message, key):
@@ -319,7 +343,7 @@ def c_mock(m): process_send(m, 'mockrise')
 # --- PDF COMMAND ---
 @bot.message_handler(commands=['make_pdf'])
 def cmd_make_pdf(m):
-    bot.reply_to(m, "⏳ Generating Premium PDF...")
+    bot.reply_to(m, "⏳ Generating PDF (Custom UI)...")
     uid = m.from_user.id
     hist = load_json(DB_HISTORY)
     cutoff = datetime.now() - timedelta(days=7)
@@ -332,21 +356,21 @@ def cmd_make_pdf(m):
             if not any(h['data'].get('question') == q.get('question') for h in pdf_data):
                 pdf_data.append({'timestamp': timestamp, 'channel': 'CURRENT', 'data': q})
     
-    if not pdf_data: return bot.reply_to(m, "❌ Empty Data. Send JSON first.")
+    if not pdf_data: return bot.reply_to(m, "❌ Empty Data.")
     
-    fname = f"MockRise_Premium_{datetime.now().strftime('%d%m')}.pdf"
+    fname = f"Smart_Quiz_{datetime.now().strftime('%d%m')}.pdf"
     
-    # Generate using Premium HTML Engine
-    result_file = generate_pdf_html(pdf_data, fname, "MockRise Exam Series")
+    # Generate using Custom HTML Engine
+    result_file = generate_pdf_html(pdf_data, fname, "Weekly Compilation")
     
     if result_file:
         with open(result_file, 'rb') as f:
-            bot.send_document(m.chat.id, f, caption=f"✨ Premium PDF Ready! ({len(pdf_data)} Qs)")
+            bot.send_document(m.chat.id, f, caption=f"📄 Custom UI PDF ({len(pdf_data)} Qs)")
         # Auto Broadcast
         with open(result_file, 'rb') as f:
-            bot.send_document(MAIN_CHANNEL_ID, f, caption="📚 Latest Premium PDF Update")
+            bot.send_document(MAIN_CHANNEL_ID, f, caption="📚 Latest PDF Update")
     else:
-        bot.reply_to(m, "❌ PDF Generation Failed. Check server logs.")
+        bot.reply_to(m, "❌ PDF Generation Failed.")
 
 @bot.message_handler(commands=['bulk_send'])
 def cmd_bulk(m):
@@ -361,7 +385,7 @@ def handle_json(m):
             data = json.loads(m.text)
             quiz_buffer[m.from_user.id] = data
             bot.reply_to(m, f"✅ JSON Received ({len(data)} Qs)\n\n👇 Click:\n/rssb, /make_pdf")
-        except: bot.reply_to(m, "❌ Invalid JSON. Please check format.")
+        except: bot.reply_to(m, "❌ Invalid JSON")
 
 if __name__ == "__main__":
     keep_alive()
