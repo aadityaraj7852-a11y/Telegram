@@ -23,8 +23,8 @@ CHANNELS = {
     'upsc': {'id': '@upsc_ssc_cgl_mts_cgl_chsl_gk', 'name': 'UPSC/IAS'},
     'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS'},
     'rssb': {'id': '@ldc_reet_ras_2ndgrade_kalam', 'name': 'RSSB/LDC/REET'},
-    'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Springboard'},
-    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'}
+    'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Mockrise'},
+    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Mockrise'}
 }
 
 # Files
@@ -45,7 +45,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (Advanced Quiz Engine)!"
+    return "✅ Bot is Running (Edit Mode + Clean PDF)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -190,21 +190,24 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     help_text = """
-🤖 <b>MockRise Pro Bot (HTML Mode)</b>
+🤖 <b>MockRise Pro Bot</b>
 
-📂 <b>Smart PDF Tools:</b>
-/pdf_daily - Today's Quiz (Splits by Channel)
-/pdf_weekly - Last 7 Days (Splits by Channel)
+📝 <b>Editing:</b>
+/edit - Edit any question (Change Q, Options, Answer)
+/list - View current questions
+
+📂 <b>PDF Tools:</b>
+/pdf_daily - Today's Quiz
+/pdf_weekly - Last 7 Days
 /pdf_custom - Custom Range
 
 📢 <b>Sending:</b>
 /rssb, /ssc, /upsc, /springboard, /kalam
-/bulk_send - Send Quizzes to All Channels
+/bulk_send - Send to All Channels
 
 🛑 <b>Control:</b>
-/stop - Clear Current JSON
+/stop - Clear JSON
 """
-    # ✅ USING HTML MODE FOR PROPER BOLD
     bot.reply_to(message, help_text, parse_mode='HTML')
 
 @bot.message_handler(commands=['stop'])
@@ -216,38 +219,83 @@ def cmd_stop(m):
     else:
         bot.reply_to(m, "Buffer already empty.")
 
+@bot.message_handler(commands=['list'])
+def cmd_list(m):
+    uid = m.from_user.id
+    if uid not in quiz_buffer: return bot.reply_to(m, "📭 Buffer Empty.")
+    
+    text = "📋 <b>Current Questions:</b>\n\n"
+    for i, q in enumerate(quiz_buffer[uid]):
+        text += f"<b>{i+1}.</b> {q.get('question')[:50]}...\n"
+    bot.reply_to(m, text, parse_mode='HTML')
+
 # ==========================================
-# 🚀 ADVANCED SENDING LOGIC (Long Text Fix)
+# ✏️ EDIT FEATURE
+# ==========================================
+
+@bot.message_handler(commands=['edit'])
+def cmd_edit_start(m):
+    uid = m.from_user.id
+    if uid not in quiz_buffer or not quiz_buffer[uid]:
+        return bot.reply_to(m, "❌ <b>Buffer is Empty!</b> Upload JSON first.", parse_mode='HTML')
+    
+    msg = bot.reply_to(m, f"✏️ <b>Edit Mode</b>\n\nSend the <b>Question Number</b> (1 - {len(quiz_buffer[uid])}) you want to edit:", parse_mode='HTML')
+    bot.register_next_step_handler(msg, step_edit_number)
+
+def step_edit_number(m):
+    uid = m.from_user.id
+    if m.text.lower() == '/cancel': return bot.reply_to(m, "🚫 Edit Cancelled.")
+    
+    try:
+        idx = int(m.text) - 1
+        if 0 <= idx < len(quiz_buffer[uid]):
+            q_data = quiz_buffer[uid][idx]
+            q_str = json.dumps(q_data, indent=2, ensure_ascii=False)
+            
+            msg = bot.reply_to(m, 
+                f"📝 <b>Editing Question {idx+1}:</b>\n<pre>{q_str}</pre>\n\n👇 <b>Send the NEW JSON</b> code to replace this question:", 
+                parse_mode='HTML'
+            )
+            bot.register_next_step_handler(msg, step_edit_save, idx)
+        else:
+            bot.reply_to(m, "❌ Invalid Number. Try /edit again.")
+    except:
+        bot.reply_to(m, "❌ Please send a number.")
+
+def step_edit_save(m, idx):
+    uid = m.from_user.id
+    try:
+        # Cleaner
+        clean_text = m.text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+        new_q = json.loads(clean_text)
+        
+        # Check basic fields
+        if 'question' not in new_q: raise ValueError("Missing 'question' field")
+        
+        quiz_buffer[uid][idx] = new_q
+        bot.reply_to(m, f"✅ <b>Question {idx+1} Updated!</b>\nCheck with /list or send now.", parse_mode='HTML')
+    except Exception as e:
+        bot.reply_to(m, f"❌ <b>Update Failed:</b> Invalid JSON.\nError: {e}\nTry /edit again.", parse_mode='HTML')
+
+# ==========================================
+# 🚀 SENDING LOGIC
 # ==========================================
 
 def safe_send_poll(target_chat, question, options, correct_index, explanation):
-    """
-    Handles:
-    1. Long Questions (>255 chars) -> Text first, then Poll
-    2. Long Explanations (>200 chars) -> Poll first, then Text
-    """
-    
     try:
-        # --- CASE 1: Long Question ---
         if len(question) > 250:
-            # Step A: Send Full Question as Text
             bot.send_message(target_chat, f"<b>Q.</b> {question}", parse_mode='HTML')
-            
-            # Step B: Create Placeholder Poll
             poll_question = "Q. ऊपर दिए गए प्रश्न का उत्तर दें:"
         else:
             poll_question = question
 
-        # --- CASE 2: Explanation Length ---
         if len(explanation) > 190:
-            # Explanation is too long for Poll API
             poll_explanation = "Solution 👇 (Check Reply)"
             send_exp_separately = True
         else:
             poll_explanation = explanation
             send_exp_separately = False
 
-        # --- Step C: Send Poll ---
         poll_msg = bot.send_poll(
             chat_id=target_chat,
             question=poll_question,
@@ -258,20 +306,13 @@ def safe_send_poll(target_chat, question, options, correct_index, explanation):
             is_anonymous=True
         )
 
-        # --- Step D: Send Long Explanation (if needed) ---
         if send_exp_separately:
             exp_text = f"💡 <b>Detailed Solution:</b>\n\n{explanation}"
-            bot.send_message(
-                chat_id=target_chat,
-                text=exp_text,
-                reply_to_message_id=poll_msg.message_id,
-                parse_mode='HTML'
-            )
+            bot.send_message(target_chat, exp_text, reply_to_message_id=poll_msg.message_id, parse_mode='HTML')
             
         return True
-
     except Exception as e:
-        print(f"Error Sending Poll: {e}")
+        print(f"Error: {e}")
         return False
 
 def process_send(message, key):
@@ -287,21 +328,16 @@ def process_send(message, key):
     
     for i, item in enumerate(data):
         q = item.get('question', '')
-        # Handle "options" (plural) or "option" (singular)
         opts = item.get('options', []) or item.get('option', [])
         ans = item.get('correct_index', 0)
-        exp = item.get('explanation', '') or item.get('solution', '')
+        exp = item.get('explanation', '')
         
-        # Add "Q1. " prefix if missing
-        if not q.strip().lower().startswith('q'):
-            q_display = f"Q{i+1}. {q}"
-        else:
-            q_display = q
+        if not q.strip().lower().startswith('q'): q_display = f"Q{i+1}. {q}"
+        else: q_display = q
 
-        # Use the Smart Safe Sender
         if safe_send_poll(target, q_display, opts, ans, exp):
             success += 1
-            time.sleep(2) # Delay to prevent flood
+            time.sleep(2)
 
     if success > 0:
         add_to_history(data, key)
@@ -325,26 +361,24 @@ def c_bulk(m):
     bot.reply_to(m, "✅ Bulk Send Complete.")
 
 # ==========================================
-# 📅 SMART PDF DISTRIBUTION LOGIC
+# 📅 SMART PDF DISTRIBUTION
 # ==========================================
 
 def smart_distribute(m, data, title_prefix, date_label):
-    if not data: return bot.reply_to(m, "❌ No data found for this period.")
+    if not data: return bot.reply_to(m, "❌ No data found.")
 
-    bot.reply_to(m, f"⚙️ <b>Processing Smart Distribution...</b>\nDate: {date_label}", parse_mode='HTML')
+    bot.reply_to(m, f"⚙️ <b>Processing...</b>\nDate: {date_label}", parse_mode='HTML')
 
-    # 1. Generate MASTER PDF
+    # 1. Master PDF (Admin)
     master_fname = f"Master_{datetime.now().strftime('%H%M%S')}.pdf"
-    res = generate_pdf_html(data, master_fname, f"{title_prefix} (All Channels)", date_label)
+    res = generate_pdf_html(data, master_fname, f"{title_prefix} (All Data)", date_label)
     
     if res:
-        caption = f"🗂 <b>Master PDF (Admin Copy)</b>\n📅 {date_label}\n🔢 Total: {len(data)}\nBy: @MockRise"
+        caption = f"🗂 <b>Master PDF</b>\n📅 {date_label}\nBy: @MockRise"
         with open(res, 'rb') as f:
             bot.send_document(m.chat.id, f, caption=caption, parse_mode='HTML')
     
-    # 2. Filter & Send to Channels
-    bot.reply_to(m, "🔄 <b>Splitting and sending to Channels...</b>", parse_mode='HTML')
-    
+    # 2. Channel Distribution (Clean Names)
     channel_data_map = {}
     for item in data:
         ch_key = item.get('channel')
@@ -356,32 +390,33 @@ def smart_distribute(m, data, title_prefix, date_label):
     for ch_key, ch_items in channel_data_map.items():
         if ch_key in CHANNELS:
             channel_info = CHANNELS[ch_key]
-            ch_fname = f"{ch_key}_{datetime.now().strftime('%H%M%S')}.pdf"
-            ch_title = f"{title_prefix} ({channel_info['name']})"
+            ch_fname = f"{ch_key}.pdf"
             
-            ch_pdf = generate_pdf_html(ch_items, ch_fname, ch_title, date_label)
+            # ✅ FIX: Removing Channel Name from PDF Title
+            # Title inside PDF will be generic, e.g., "Daily Quiz" or "Weekly Compilation"
+            clean_title = title_prefix 
+            
+            ch_pdf = generate_pdf_html(ch_items, ch_fname, clean_title, date_label)
             
             if ch_pdf:
                 try:
                     caption_ch = (
-                        f"📄 <b>{ch_title}</b>\n"
+                        f"📄 <b>{title_prefix}</b>\n"
                         f"📅 Date: {date_label}\n"
                         f"🔢 Questions: {len(ch_items)}\n"
                         f"By: @MockRise"
                     )
                     with open(ch_pdf, 'rb') as f:
                         bot.send_document(channel_info['id'], f, caption=caption_ch, parse_mode='HTML')
-                    
-                    bot.send_message(m.chat.id, f"✅ Sent to <b>{channel_info['name']}</b> ({len(ch_items)} Qs)", parse_mode='HTML')
                     sent_count += 1
                     time.sleep(2)
                 except Exception as e:
                     bot.send_message(m.chat.id, f"❌ Failed to send to {channel_info['name']}: {e}")
 
-    if sent_count == 0:
-        bot.reply_to(m, "⚠️ No channel-specific data found.")
-    else:
+    if sent_count > 0:
         bot.reply_to(m, "🎉 <b>Distribution Complete!</b>", parse_mode='HTML')
+    else:
+        bot.reply_to(m, "⚠️ No separate channel data found.")
 
 @bot.message_handler(commands=['pdf_daily'])
 def cmd_pdf_daily(m):
@@ -421,19 +456,15 @@ def step_pdf_range(m):
 def handle_json(m):
     if m.text.strip().startswith('['):
         try:
-            # 🧹 AUTO-CLEANER FOR JSON (Fixes Quotes Issue)
             clean_text = m.text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
             data = json.loads(clean_text)
-            
             quiz_buffer[m.from_user.id] = data
-            
             msg = (f"✅ <b>JSON Received ({len(data)} Qs)</b>\n\n"
-                   f"👇 <b>Send to Channels:</b>\n/rssb, /ssc, /upsc\n\n"
-                   f"🚀 <b>Bulk:</b> /bulk_send\n"
-                   f"📄 <b>PDF:</b> /pdf_daily")
+                   f"✏️ <b>Edit:</b> /edit\n"
+                   f"👇 <b>Send:</b> /rssb, /ssc, /bulk_send")
             bot.reply_to(m, msg, parse_mode='HTML')
         except Exception as e:
-            bot.reply_to(m, f"❌ <b>Invalid JSON</b>\nError: {e}", parse_mode='HTML')
+            bot.reply_to(m, f"❌ <b>Invalid JSON</b>\n{e}", parse_mode='HTML')
 
 if __name__ == "__main__":
     keep_alive()
