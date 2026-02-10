@@ -16,12 +16,14 @@ from jinja2 import Template
 BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 MAIN_CHANNEL_ID = "@mockrise"
 
+# ✅ Channels List
 CHANNELS = {
-    'mockrise': {'id': MAIN_CHANNEL_ID, 'name': 'MockRise Main'},
-    'rssb': {'id': MAIN_CHANNEL_ID, 'name': 'RSSB Springboard'},
-    'kalam': {'id': MAIN_CHANNEL_ID, 'name': 'Kalam Academy'},
-    'ssc': {'id': MAIN_CHANNEL_ID, 'name': 'SSC Exams'},
-    'upsc': {'id': MAIN_CHANNEL_ID, 'name': 'UPSC/IAS'},
+    'mockrise': {'id': '@mockrise', 'name': 'MockRise Main'},
+    'upsc': {'id': '@upsc_ssc_cgl_mts_cgl_chsl_gk', 'name': 'UPSC/IAS'},
+    'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS'},
+    'rssb': {'id': '@ldc_reet_ras_2ndgrade_kalam', 'name': 'RSSB/LDC/REET'},
+    'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Springboard'},
+    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'}
 }
 
 # Files
@@ -42,7 +44,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running with Custom UI!"
+    return "✅ Bot is Running (Dynamic PDF Update)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -75,7 +77,7 @@ def add_to_history(questions, channel_key):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for q in questions:
         history.append({'timestamp': timestamp, 'channel': channel_key, 'data': q})
-    cutoff = datetime.now() - timedelta(days=30)
+    cutoff = datetime.now() - timedelta(days=60) # Keep 60 days history
     history = [h for h in history if datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S") > cutoff]
     save_json(DB_HISTORY, history)
 
@@ -89,178 +91,94 @@ def update_stats(user_id, channel, count, status):
     save_json(DB_STATS, stats)
 
 # ==========================================
-# 📄 PDF ENGINE (CUSTOM UI TEMPLATE)
+# 📄 PDF ENGINE (Dynamic Title & Line Footer)
 # ==========================================
 
 def check_font():
-    """Downloads Hindi font."""
     if not os.path.exists(FONT_FILE):
-        print("📥 Downloading Hindi Font...")
         url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
         try:
             r = requests.get(url)
-            with open(FONT_FILE, 'wb') as f:
-                f.write(r.content)
+            with open(FONT_FILE, 'wb') as f: f.write(r.content)
         except: pass
     return os.path.abspath(FONT_FILE)
 
-def generate_pdf_html(data_list, filename, title_text):
+def generate_pdf_html(data_list, filename, title_text, date_range_text):
     font_path = check_font()
     
-    # 🎨 YOUR CUSTOM HTML TEMPLATE
     html_template = """
     <!DOCTYPE html>
     <html lang="hi">
     <head>
     <meta charset="UTF-8">
     <style>
-        @font-face {
-            font-family: 'Noto Sans Devanagari';
-            src: url('file://{{ font_path }}');
-        }
-
+        @font-face { font-family: 'Noto Sans Devanagari'; src: url('file://{{ font_path }}'); }
+        
         @page {
-            size: A4;
+            size: A4; 
             margin: 20mm 15mm;
 
-            /* Footer page number circle */
+            /* ✅ FOOTER UPDATE: Line instead of Circle */
             @bottom-center {
-                content: counter(page);
-                background: #e0e0e0;
-                border-radius: 50%;
-                padding: 6px 12px;
+                content: "Page " counter(page);
+                font-family: 'Noto Sans Devanagari', sans-serif;
                 font-size: 10pt;
-                font-weight: bold;
+                border-top: 1px solid #444; /* Thin black line */
+                width: 90%; /* Line covers 90% width */
+                padding-top: 10px;
+                margin-bottom: 10px;
             }
         }
 
-        body {
-            font-family: "Noto Sans Devanagari", sans-serif;
-            font-size: 11pt;
-            color: #222;
-            margin: 0;
-        }
-
-        /* Header layout */
-        .header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 5px;
-        }
-
-        /* Logo spacing */
-        .logo img {
-            width: 70px;
-            height: auto;
-            margin-right: 15px;
-        }
-
-        /* Title */
-        .title {
-            text-align: center;
-            flex-grow: 1;
-        }
-
-        .title h1 {
-            margin: 0;
-            font-size: 18pt;
-            color: #000;
-        }
-
-        .title p {
-            margin: 3px 0;
-            font-size: 10pt;
-            color: #555;
-        }
-
-        /* Meta row */
-        .meta {
-            display: flex;
-            justify-content: space-between;
-            font-weight: bold;
-            font-size: 10pt;
-            margin-top: 15px;
-            color: #333;
-        }
-
-        /* Line */
-        .top-line {
-            border-bottom: 2px solid black;
-            margin: 8px 0 20px 0;
-        }
-
-        /* Question style */
-        .question-block {
-            margin-bottom: 25px;
-            page-break-inside: avoid;
-        }
-
-        .q-text {
-            font-weight: bold;
-            font-size: 11pt;
-            margin-bottom: 5px;
-        }
-
-        .options {
-            margin-left: 20px;
-            margin-top: 8px;
-        }
-
-        .option {
-            margin-bottom: 4px;
-        }
-
-        .solution-box {
-            border: 2px solid #333;
-            padding: 10px;
-            border-radius: 8px;
-            margin-top: 10px;
-            background-color: #fff;
-        }
-
-        .answer {
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #000;
-        }
+        body { font-family: "Noto Sans Devanagari", sans-serif; font-size: 11pt; color: #222; margin: 0; }
+        
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+        .logo img { width: 70px; height: auto; margin-right: 15px; }
+        
+        .title { text-align: center; flex-grow: 1; }
+        .title h1 { margin: 0; font-size: 18pt; color: #000; text-transform: uppercase; }
+        .title p { margin: 3px 0; font-size: 10pt; color: #555; }
+        
+        .meta { display: flex; justify-content: space-between; font-weight: bold; font-size: 10pt; margin-top: 15px; color: #333; }
+        .top-line { border-bottom: 2px solid black; margin: 8px 0 20px 0; }
+        
+        .question-block { margin-bottom: 25px; page-break-inside: avoid; }
+        .q-text { font-weight: bold; font-size: 11pt; margin-bottom: 5px; }
+        
+        .options { margin-left: 20px; margin-top: 8px; }
+        .option { margin-bottom: 4px; }
+        
+        .solution-box { border: 2px solid #333; padding: 10px; border-radius: 8px; margin-top: 10px; background-color: #fff; }
+        .answer { font-weight: bold; margin-bottom: 5px; color: #000; }
     </style>
     </head>
-
     <body>
-
+    
     <div class="header">
-        <div class="logo">
-            <img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg">
-        </div>
-
+        <div class="logo"><img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg"></div>
         <div class="title">
             <h1>{{ title }}</h1>
             <p>@MockRise Telegram Channel</p>
         </div>
-
-        <div style="width:70px;"></div> </div>
-
+        <div style="width:70px;"></div>
+    </div>
+    
     <div class="meta">
-        <div>Generated Date: {{ date }}</div>
+        <div>Date: {{ date_range }}</div>
         <div>Total Questions: {{ total }}</div>
     </div>
-
+    
     <div class="top-line"></div>
-
+    
     {% for item in items %}
     <div class="question-block">
         <div class="q-text">Q{{ loop.index }}. {{ item.data.question }}</div>
-        
         <div class="options">
             {% set labels = ['(A)', '(B)', '(C)', '(D)'] %}
             {% for opt in item.data.options %}
-                <div class="option">
-                    {{ labels[loop.index0] if loop.index0 < 4 else loop.index }} {{ opt }}
-                </div>
+                <div class="option">{{ labels[loop.index0] if loop.index0 < 4 else loop.index }} {{ opt }}</div>
             {% endfor %}
         </div>
-        
         <div class="solution-box">
             {% set ans_idx = item.data.correct_index %}
             <div class="answer">उत्तर: ({{ labels[ans_idx] if ans_idx < 4 else ans_idx+1 }})</div>
@@ -268,16 +186,14 @@ def generate_pdf_html(data_list, filename, title_text):
         </div>
     </div>
     {% endfor %}
-
-    </body>
-    </html>
+    
+    </body></html>
     """
     
-    # 🛠 Render & Convert
     template = Template(html_template)
     rendered_html = template.render(
         title=title_text,
-        date=datetime.now().strftime('%d-%m-%Y'),
+        date_range=date_range_text,
         total=len(data_list),
         items=data_list,
         font_path=font_path
@@ -286,9 +202,7 @@ def generate_pdf_html(data_list, filename, title_text):
     try:
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
-    except Exception as e:
-        print(f"PDF Error: {e}")
-        return None
+    except: return None
 
 # ==========================================
 # 🎮 COMMANDS
@@ -296,16 +210,32 @@ def generate_pdf_html(data_list, filename, title_text):
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "🤖 UI Updated! Send JSON to generate PDF.")
+    help_text = """
+🤖 **MockRise Pro Automation Bot**
 
-# --- CHANNELS SENDING LOGIC ---
+📂 **PDF Tools (Updated):**
+/pdf_custom - Custom Date (From - To)
+/pdf_weekly - Last 7 Days (Weekly)
+/pdf_daily - Today's Quiz
+
+📢 **Channels:**
+/rssb, /ssc, /upsc, /kalam, /springboard
+/bulk_send - Send to All
+
+💡 **Start:** Upload JSON first!
+"""
+    bot.reply_to(message, help_text)
+
+# --- SENDING LOGIC ---
 def process_send(message, key):
     uid = message.from_user.id
-    if uid not in quiz_buffer: return bot.reply_to(message, "❌ No JSON found.")
+    if uid not in quiz_buffer: return bot.reply_to(message, "❌ No JSON data found.")
 
-    bot.reply_to(message, f"🚀 Sending to {CHANNELS[key]['name']}...")
-    data = quiz_buffer[uid]
     target = CHANNELS[key]['id']
+    name = CHANNELS[key]['name']
+    bot.reply_to(message, f"📤 Sending to **{name}**...")
+    
+    data = quiz_buffer[uid]
     success = 0
     
     for i, item in enumerate(data):
@@ -315,11 +245,12 @@ def process_send(message, key):
             ans = item.get('correct_index',0)
             exp = item.get('explanation','')
             
-            if len(exp)>190:
+            if len(exp) > 190:
                 s = bot.send_poll(target, f"Q{i+1}. {q}", opts, type='quiz', correct_option_id=ans, explanation="Solution 👇", is_anonymous=True)
                 bot.send_message(target, f"📝 Solution:\n{exp}", reply_to_message_id=s.message_id)
             else:
                 bot.send_poll(target, f"Q{i+1}. {q}", opts, type='quiz', correct_option_id=ans, explanation=exp, is_anonymous=True)
+            
             success += 1
             time.sleep(2)
         except: pass
@@ -327,7 +258,7 @@ def process_send(message, key):
     if success > 0:
         add_to_history(data, key)
         update_stats(uid, key, success, 'success')
-        bot.reply_to(message, f"✅ Sent {success} questions.")
+        bot.reply_to(message, f"✅ Sent {success} to {name}.")
 
 @bot.message_handler(commands=['rssb'])
 def c_rssb(m): process_send(m, 'rssb')
@@ -335,48 +266,110 @@ def c_rssb(m): process_send(m, 'rssb')
 def c_ssc(m): process_send(m, 'ssc')
 @bot.message_handler(commands=['upsc'])
 def c_upsc(m): process_send(m, 'upsc')
+@bot.message_handler(commands=['springboard'])
+def c_sb(m): process_send(m, 'springboard')
 @bot.message_handler(commands=['kalam'])
-def c_kalam(m): process_send(m, 'kalam')
-@bot.message_handler(commands=['mockrise'])
-def c_mock(m): process_send(m, 'mockrise')
-
-# --- PDF COMMAND ---
-@bot.message_handler(commands=['make_pdf'])
-def cmd_make_pdf(m):
-    bot.reply_to(m, "⏳ Generating PDF (Custom UI)...")
-    uid = m.from_user.id
-    hist = load_json(DB_HISTORY)
-    cutoff = datetime.now() - timedelta(days=7)
-    pdf_data = [h for h in hist if datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S") > cutoff]
-    
-    if uid in quiz_buffer:
-        current_data = quiz_buffer[uid]
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for q in current_data:
-            if not any(h['data'].get('question') == q.get('question') for h in pdf_data):
-                pdf_data.append({'timestamp': timestamp, 'channel': 'CURRENT', 'data': q})
-    
-    if not pdf_data: return bot.reply_to(m, "❌ Empty Data.")
-    
-    fname = f"Smart_Quiz_{datetime.now().strftime('%d%m')}.pdf"
-    
-    # Generate using Custom HTML Engine
-    result_file = generate_pdf_html(pdf_data, fname, "Weekly Compilation")
-    
-    if result_file:
-        with open(result_file, 'rb') as f:
-            bot.send_document(m.chat.id, f, caption=f"📄 Custom UI PDF ({len(pdf_data)} Qs)")
-        # Auto Broadcast
-        with open(result_file, 'rb') as f:
-            bot.send_document(MAIN_CHANNEL_ID, f, caption="📚 Latest PDF Update")
-    else:
-        bot.reply_to(m, "❌ PDF Generation Failed.")
-
+def c_kl(m): process_send(m, 'kalam')
 @bot.message_handler(commands=['bulk_send'])
-def cmd_bulk(m):
+def c_bulk(m):
     if m.from_user.id not in quiz_buffer: return bot.reply_to(m, "❌ No JSON.")
-    process_send(m, 'mockrise')
-    bot.reply_to(m, "✅ Done.")
+    for k in CHANNELS: process_send(m, k)
+    bot.reply_to(m, "✅ Bulk Send Complete.")
+
+# ==========================================
+# 📅 NEW PDF LOGIC (Daily, Weekly, Custom)
+# ==========================================
+
+# 1️⃣ DAILY PDF
+@bot.message_handler(commands=['pdf_daily'])
+def cmd_pdf_daily(m):
+    today = datetime.now().strftime("%Y-%m-%d") # Format for comparison
+    today_disp = datetime.now().strftime("%d-%m-%Y") # Format for display
+    
+    hist = load_json(DB_HISTORY)
+    data = [h for h in hist if h['timestamp'].startswith(today)]
+    
+    if not data: return bot.reply_to(m, "❌ No data found for Today.")
+    
+    fname = f"Daily_Quiz_{datetime.now().strftime('%d%m')}.pdf"
+    # Dynamic Title: Daily Quiz
+    generate_and_send(m, data, fname, f"Daily Quiz ({today_disp})", today_disp)
+
+# 2️⃣ WEEKLY PDF
+@bot.message_handler(commands=['pdf_weekly'])
+def cmd_pdf_weekly(m):
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=7)
+    
+    hist = load_json(DB_HISTORY)
+    data = []
+    
+    for h in hist:
+        h_dt = datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S")
+        if start_date <= h_dt <= end_date:
+            data.append(h)
+            
+    if not data: return bot.reply_to(m, "❌ No data found for Last 7 Days.")
+    
+    s_disp = start_date.strftime("%d-%m")
+    e_disp = end_date.strftime("%d-%m")
+    fname = f"Weekly_Quiz_{s_disp}_to_{e_disp}.pdf"
+    
+    # Dynamic Title: Weekly Compilation
+    generate_and_send(m, data, fname, "Weekly Compilation", f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}")
+
+# 3️⃣ CUSTOM DATE PDF
+@bot.message_handler(commands=['pdf_custom'])
+def cmd_pdf_custom(m):
+    msg = bot.send_message(m.chat.id, "📅 Send Date Range (DD-MM-YYYY to DD-MM-YYYY):\nExample: 01-02-2026 to 05-02-2026")
+    bot.register_next_step_handler(msg, step_pdf_range)
+
+def step_pdf_range(m):
+    try:
+        # User input handling "01-02-2026 to 05-02-2026"
+        txt = m.text.lower().replace('to', ' ').strip()
+        parts = txt.split()
+        
+        if len(parts) < 2: return bot.reply_to(m, "❌ Invalid Format. Use: Start to End")
+        
+        s_date = datetime.strptime(parts[0], "%d-%m-%Y")
+        e_date = datetime.strptime(parts[1], "%d-%m-%Y") + timedelta(days=1) # Include end date fully
+        
+        hist = load_json(DB_HISTORY)
+        data = []
+        for h in hist:
+            h_dt = datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S")
+            if s_date <= h_dt < e_date:
+                data.append(h)
+                
+        if not data: return bot.reply_to(m, "❌ No data in this range.")
+        
+        fname = f"Custom_Quiz.pdf"
+        date_str = f"{s_date.strftime('%d-%m-%Y')} to {parts[1]}"
+        
+        # Dynamic Title: Question Bank
+        generate_and_send(m, data, fname, "Custom Question Bank", date_str)
+        
+    except Exception as e:
+        bot.reply_to(m, f"❌ Error: {e}")
+
+# Helper to generate and send
+def generate_and_send(m, data, fname, title, date_label):
+    bot.reply_to(m, f"⏳ Generating PDF: {title}...")
+    
+    res = generate_pdf_html(data, fname, title, date_label)
+    
+    if res:
+        caption = (
+            f"📄 **{title}**\n"
+            f"📅 Date: {date_label}\n"
+            f"🔢 Questions: {len(data)}\n"
+            "By: @MockRise"
+        )
+        with open(res, 'rb') as f:
+            bot.send_document(m.chat.id, f, caption=caption)
+    else:
+        bot.reply_to(m, "❌ Failed to generate PDF.")
 
 @bot.message_handler(content_types=['text'])
 def handle_json(m):
@@ -384,7 +377,7 @@ def handle_json(m):
         try:
             data = json.loads(m.text)
             quiz_buffer[m.from_user.id] = data
-            bot.reply_to(m, f"✅ JSON Received ({len(data)} Qs)\n\n👇 Click:\n/rssb, /make_pdf")
+            bot.reply_to(m, f"✅ Received {len(data)} Qs.\nUse /rssb, /bulk_send, /pdf_daily")
         except: bot.reply_to(m, "❌ Invalid JSON")
 
 if __name__ == "__main__":
