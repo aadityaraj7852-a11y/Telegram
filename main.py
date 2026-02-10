@@ -17,14 +17,13 @@ from jinja2 import Template
 BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 MAIN_CHANNEL_ID = "@mockrise"
 
-# ✅ Channels List
 CHANNELS = {
     'mockrise': {'id': '@mockrise', 'name': 'MockRise Main'},
     'upsc': {'id': '@upsc_ssc_cgl_mts_cgl_chsl_gk', 'name': 'UPSC/IAS'},
     'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS'},
     'rssb': {'id': '@ldc_reet_ras_2ndgrade_kalam', 'name': 'RSSB/LDC/REET'},
-    'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Mockrise'},
-    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Mockrise'}
+    'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Springboard'},
+    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'}
 }
 
 # Files
@@ -34,6 +33,7 @@ FONT_FILE = "NotoSansDevanagari-Regular.ttf"
 
 # Memory
 quiz_buffer = {}
+json_fragments = {}  # 🛠️ New: To store broken JSON parts
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -45,7 +45,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (Edit Mode + Clean PDF)!"
+    return "✅ Bot is Running (Large JSON Support Added)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -63,14 +63,12 @@ def keep_alive():
 def load_json(filename):
     if not os.path.exists(filename): return [] if filename == DB_HISTORY else {}
     try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        with open(filename, 'r', encoding='utf-8') as f: return json.load(f)
     except: return [] if filename == DB_HISTORY else {}
 
 def save_json(filename, data):
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        with open(filename, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
     except: pass
 
 def add_to_history(questions, channel_key):
@@ -193,7 +191,7 @@ def send_welcome(message):
 🤖 <b>MockRise Pro Bot</b>
 
 📝 <b>Editing:</b>
-/edit - Edit any question (Change Q, Options, Answer)
+/edit - Edit any question
 /list - View current questions
 
 📂 <b>PDF Tools:</b>
@@ -206,18 +204,19 @@ def send_welcome(message):
 /bulk_send - Send to All Channels
 
 🛑 <b>Control:</b>
-/stop - Clear JSON
+/stop - Clear All JSON Data
+/clear_temp - Clear partial/broken JSON
 """
     bot.reply_to(message, help_text, parse_mode='HTML')
 
-@bot.message_handler(commands=['stop'])
+@bot.message_handler(commands=['stop', 'clear_temp'])
 def cmd_stop(m):
     uid = m.from_user.id
-    if uid in quiz_buffer:
-        del quiz_buffer[uid]
-        bot.reply_to(m, "🛑 <b>Buffer Cleared.</b>", parse_mode='HTML')
-    else:
-        bot.reply_to(m, "Buffer already empty.")
+    # Clear both buffers
+    if uid in quiz_buffer: del quiz_buffer[uid]
+    if uid in json_fragments: del json_fragments[uid]
+    
+    bot.reply_to(m, "🛑 <b>All Buffers Cleared.</b> Ready for fresh data.", parse_mode='HTML')
 
 @bot.message_handler(commands=['list'])
 def cmd_list(m):
@@ -265,11 +264,9 @@ def step_edit_number(m):
 def step_edit_save(m, idx):
     uid = m.from_user.id
     try:
-        # Cleaner
         clean_text = m.text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
         new_q = json.loads(clean_text)
         
-        # Check basic fields
         if 'question' not in new_q: raise ValueError("Missing 'question' field")
         
         quiz_buffer[uid][idx] = new_q
@@ -369,7 +366,7 @@ def smart_distribute(m, data, title_prefix, date_label):
 
     bot.reply_to(m, f"⚙️ <b>Processing...</b>\nDate: {date_label}", parse_mode='HTML')
 
-    # 1. Master PDF (Admin)
+    # Master PDF
     master_fname = f"Master_{datetime.now().strftime('%H%M%S')}.pdf"
     res = generate_pdf_html(data, master_fname, f"{title_prefix} (All Data)", date_label)
     
@@ -378,7 +375,7 @@ def smart_distribute(m, data, title_prefix, date_label):
         with open(res, 'rb') as f:
             bot.send_document(m.chat.id, f, caption=caption, parse_mode='HTML')
     
-    # 2. Channel Distribution (Clean Names)
+    # Channel Distribution
     channel_data_map = {}
     for item in data:
         ch_key = item.get('channel')
@@ -392,10 +389,8 @@ def smart_distribute(m, data, title_prefix, date_label):
             channel_info = CHANNELS[ch_key]
             ch_fname = f"{ch_key}.pdf"
             
-            # ✅ FIX: Removing Channel Name from PDF Title
-            # Title inside PDF will be generic, e.g., "Daily Quiz" or "Weekly Compilation"
+            # Using clean title without channel name
             clean_title = title_prefix 
-            
             ch_pdf = generate_pdf_html(ch_items, ch_fname, clean_title, date_label)
             
             if ch_pdf:
@@ -452,19 +447,61 @@ def step_pdf_range(m):
         smart_distribute(m, data, "Question Bank", label)
     except: bot.reply_to(m, "❌ Error/Invalid Format.")
 
+# ==========================================
+# 🧩 JSON ACCUMULATOR (Handle Split Messages)
+# ==========================================
+
 @bot.message_handler(content_types=['text'])
 def handle_json(m):
-    if m.text.strip().startswith('['):
+    uid = m.from_user.id
+    text = m.text.strip()
+    
+    # 1. Start of JSON Array
+    if text.startswith('['):
+        json_fragments[uid] = text # Start new buffer
+    
+    # 2. Middle or End part (If buffer exists)
+    elif uid in json_fragments:
+        json_fragments[uid] += text
+        
+    # 3. Random text without buffer start
+    else:
+        # Ignore normal chat or show help
+        if not text.startswith('/'):
+            bot.reply_to(m, "⚠️ <b>Please start JSON with '['</b>", parse_mode='HTML')
+        return
+
+    # Check if JSON seems complete (Ends with ']')
+    full_text = json_fragments[uid]
+    if full_text.endswith(']'):
         try:
-            clean_text = m.text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+            # 🧹 CLEAN & PARSE
+            clean_text = full_text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+            # Remove potential markdown formatting if copied from telegram code block
+            clean_text = re.sub(r'^```json\s*|\s*```$', '', clean_text, flags=re.MULTILINE)
+            
             data = json.loads(clean_text)
-            quiz_buffer[m.from_user.id] = data
+            
+            # ✅ SUCCESS
+            quiz_buffer[uid] = data
+            del json_fragments[uid] # Clear temp buffer
+            
             msg = (f"✅ <b>JSON Received ({len(data)} Qs)</b>\n\n"
                    f"✏️ <b>Edit:</b> /edit\n"
                    f"👇 <b>Send:</b> /rssb, /ssc, /bulk_send")
             bot.reply_to(m, msg, parse_mode='HTML')
+            
+        except json.JSONDecodeError:
+            # Maybe it's not actually finished? Or error?
+            # We wait for more, but warn if it looks huge
+            if len(full_text) > 100000:
+                bot.reply_to(m, "❌ JSON too large or invalid. /stop to clear.")
         except Exception as e:
             bot.reply_to(m, f"❌ <b>Invalid JSON</b>\n{e}", parse_mode='HTML')
+            del json_fragments[uid]
+    else:
+        # Acknowledge receipt of part
+        bot.reply_to(m, f"📥 <b>Part Received..</b> ({len(full_text)} chars)\nSend the rest!", parse_mode='HTML')
 
 if __name__ == "__main__":
     keep_alive()
