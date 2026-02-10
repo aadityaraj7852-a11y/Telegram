@@ -44,7 +44,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (Dynamic PDF Update)!"
+    return "✅ Bot is Running (Bulk PDF + Website Branding)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -77,7 +77,7 @@ def add_to_history(questions, channel_key):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for q in questions:
         history.append({'timestamp': timestamp, 'channel': channel_key, 'data': q})
-    cutoff = datetime.now() - timedelta(days=60) # Keep 60 days history
+    cutoff = datetime.now() - timedelta(days=60)
     history = [h for h in history if datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S") > cutoff]
     save_json(DB_HISTORY, history)
 
@@ -91,7 +91,7 @@ def update_stats(user_id, channel, count, status):
     save_json(DB_STATS, stats)
 
 # ==========================================
-# 📄 PDF ENGINE (Dynamic Title & Line Footer)
+# 📄 PDF ENGINE (Updated Branding)
 # ==========================================
 
 def check_font():
@@ -113,63 +113,41 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
     <meta charset="UTF-8">
     <style>
         @font-face { font-family: 'Noto Sans Devanagari'; src: url('file://{{ font_path }}'); }
-        
         @page {
-            size: A4; 
-            margin: 20mm 15mm;
-
-            /* ✅ FOOTER UPDATE: Line instead of Circle */
+            size: A4; margin: 20mm 15mm;
             @bottom-center {
                 content: "Page " counter(page);
                 font-family: 'Noto Sans Devanagari', sans-serif;
                 font-size: 10pt;
-                border-top: 1px solid #444; /* Thin black line */
-                width: 90%; /* Line covers 90% width */
-                padding-top: 10px;
-                margin-bottom: 10px;
+                border-top: 1px solid #444; width: 90%; padding-top: 10px; margin-bottom: 10px;
             }
         }
-
         body { font-family: "Noto Sans Devanagari", sans-serif; font-size: 11pt; color: #222; margin: 0; }
-        
         .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
         .logo img { width: 70px; height: auto; margin-right: 15px; }
-        
         .title { text-align: center; flex-grow: 1; }
         .title h1 { margin: 0; font-size: 18pt; color: #000; text-transform: uppercase; }
         .title p { margin: 3px 0; font-size: 10pt; color: #555; }
-        
         .meta { display: flex; justify-content: space-between; font-weight: bold; font-size: 10pt; margin-top: 15px; color: #333; }
         .top-line { border-bottom: 2px solid black; margin: 8px 0 20px 0; }
-        
         .question-block { margin-bottom: 25px; page-break-inside: avoid; }
         .q-text { font-weight: bold; font-size: 11pt; margin-bottom: 5px; }
-        
         .options { margin-left: 20px; margin-top: 8px; }
         .option { margin-bottom: 4px; }
-        
         .solution-box { border: 2px solid #333; padding: 10px; border-radius: 8px; margin-top: 10px; background-color: #fff; }
         .answer { font-weight: bold; margin-bottom: 5px; color: #000; }
     </style>
     </head>
     <body>
-    
     <div class="header">
         <div class="logo"><img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg"></div>
         <div class="title">
             <h1>{{ title }}</h1>
-            <p>@MockRise Telegram Channel</p>
-        </div>
+            <p>www.mockrise.com</p> </div>
         <div style="width:70px;"></div>
     </div>
-    
-    <div class="meta">
-        <div>Date: {{ date_range }}</div>
-        <div>Total Questions: {{ total }}</div>
-    </div>
-    
+    <div class="meta"><div>Date: {{ date_range }}</div><div>Total Questions: {{ total }}</div></div>
     <div class="top-line"></div>
-    
     {% for item in items %}
     <div class="question-block">
         <div class="q-text">Q{{ loop.index }}. {{ item.data.question }}</div>
@@ -186,7 +164,6 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
         </div>
     </div>
     {% endfor %}
-    
     </body></html>
     """
     
@@ -213,18 +190,30 @@ def send_welcome(message):
     help_text = """
 🤖 **MockRise Pro Automation Bot**
 
-📂 **PDF Tools (Updated):**
-/pdf_custom - Custom Date (From - To)
-/pdf_weekly - Last 7 Days (Weekly)
-/pdf_daily - Today's Quiz
+📂 **PDF Tools:**
+/pdf_daily - Today's Quiz (To Bot)
+/bulk_pdf_daily - Today's Quiz (To ALL Channels) 🚀
+/pdf_weekly - Last 7 Days (To Bot)
+/pdf_custom - Custom Range
 
-📢 **Channels:**
-/rssb, /ssc, /upsc, /kalam, /springboard
-/bulk_send - Send to All
+📢 **Sending:**
+/rssb, /ssc, /upsc, /springboard, /kalam
+/bulk_send - Send Quizzes to All Channels
 
-💡 **Start:** Upload JSON first!
+🛑 **Control:**
+/stop - Clear Current JSON
 """
-    bot.reply_to(message, help_text)
+    # ✅ FIX: Added parse_mode to handle bold text correctly
+    bot.reply_to(message, help_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['stop'])
+def cmd_stop(m):
+    uid = m.from_user.id
+    if uid in quiz_buffer:
+        del quiz_buffer[uid]
+        bot.reply_to(m, "🛑 **Buffer Cleared.** You can upload new JSON now.", parse_mode='Markdown')
+    else:
+        bot.reply_to(m, "Nothing to stop.")
 
 # --- SENDING LOGIC ---
 def process_send(message, key):
@@ -233,7 +222,7 @@ def process_send(message, key):
 
     target = CHANNELS[key]['id']
     name = CHANNELS[key]['name']
-    bot.reply_to(message, f"📤 Sending to **{name}**...")
+    bot.reply_to(message, f"📤 Sending to *{name}*...", parse_mode='Markdown')
     
     data = quiz_buffer[uid]
     success = 0
@@ -277,14 +266,56 @@ def c_bulk(m):
     bot.reply_to(m, "✅ Bulk Send Complete.")
 
 # ==========================================
-# 📅 NEW PDF LOGIC (Daily, Weekly, Custom)
+# 📅 PDF LOGIC (Updated with BULK Mode)
 # ==========================================
+
+def get_caption(title, date_label, count):
+    # ✅ FIX: Use single asterisk for Bold in standard Markdown
+    return (
+        f"*Weekly Quizzes Summary*\n"
+        f"Date: {date_label}\n"
+        f"Total Questions: {count}\n"
+        f"BY : @Mockrise"
+    )
+
+def generate_and_distribute(m, data, fname, title, date_label, bulk_mode=False):
+    bot.reply_to(m, f"⏳ Generating PDF: *{title}*...", parse_mode='Markdown')
+    
+    res = generate_pdf_html(data, fname, title, date_label)
+    
+    if res:
+        caption = get_caption(title, date_label, len(data))
+        
+        # 1. Send to User/Bot
+        with open(res, 'rb') as f:
+            bot.send_document(m.chat.id, f, caption=caption, parse_mode='Markdown')
+            
+        # 2. If Bulk Mode -> Send to ALL Channels
+        if bulk_mode:
+            bot.reply_to(m, "🔄 Forwarding PDF to ALL Channels...")
+            for k, v in CHANNELS.items():
+                try:
+                    with open(res, 'rb') as f:
+                        bot.send_document(v['id'], f, caption=caption, parse_mode='Markdown')
+                    time.sleep(1)
+                except Exception as e:
+                    print(f"Failed to send PDF to {k}: {e}")
+            bot.reply_to(m, "✅ PDF Sent to all channels.")
+    else:
+        bot.reply_to(m, "❌ Failed to generate PDF.")
 
 # 1️⃣ DAILY PDF
 @bot.message_handler(commands=['pdf_daily'])
 def cmd_pdf_daily(m):
-    today = datetime.now().strftime("%Y-%m-%d") # Format for comparison
-    today_disp = datetime.now().strftime("%d-%m-%Y") # Format for display
+    process_daily_pdf(m, bulk=False)
+
+@bot.message_handler(commands=['bulk_pdf_daily'])
+def cmd_bulk_pdf_daily(m):
+    process_daily_pdf(m, bulk=True)
+
+def process_daily_pdf(m, bulk):
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_disp = datetime.now().strftime("%d-%m-%Y")
     
     hist = load_json(DB_HISTORY)
     data = [h for h in hist if h['timestamp'].startswith(today)]
@@ -292,8 +323,7 @@ def cmd_pdf_daily(m):
     if not data: return bot.reply_to(m, "❌ No data found for Today.")
     
     fname = f"Daily_Quiz_{datetime.now().strftime('%d%m')}.pdf"
-    # Dynamic Title: Daily Quiz
-    generate_and_send(m, data, fname, f"Daily Quiz ({today_disp})", today_disp)
+    generate_and_distribute(m, data, fname, f"Daily Quiz ({today_disp})", today_disp, bulk)
 
 # 2️⃣ WEEKLY PDF
 @bot.message_handler(commands=['pdf_weekly'])
@@ -303,73 +333,41 @@ def cmd_pdf_weekly(m):
     
     hist = load_json(DB_HISTORY)
     data = []
-    
     for h in hist:
         h_dt = datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S")
-        if start_date <= h_dt <= end_date:
-            data.append(h)
+        if start_date <= h_dt <= end_date: data.append(h)
             
     if not data: return bot.reply_to(m, "❌ No data found for Last 7 Days.")
     
-    s_disp = start_date.strftime("%d-%m")
-    e_disp = end_date.strftime("%d-%m")
-    fname = f"Weekly_Quiz_{s_disp}_to_{e_disp}.pdf"
-    
-    # Dynamic Title: Weekly Compilation
-    generate_and_send(m, data, fname, "Weekly Compilation", f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}")
+    date_str = f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
+    fname = f"Weekly_Quiz.pdf"
+    generate_and_distribute(m, data, fname, "Weekly Compilation", date_str, bulk_mode=False)
 
-# 3️⃣ CUSTOM DATE PDF
+# 3️⃣ CUSTOM DATE
 @bot.message_handler(commands=['pdf_custom'])
 def cmd_pdf_custom(m):
-    msg = bot.send_message(m.chat.id, "📅 Send Date Range (DD-MM-YYYY to DD-MM-YYYY):\nExample: 01-02-2026 to 05-02-2026")
+    msg = bot.send_message(m.chat.id, "📅 Send Date Range (DD-MM-YYYY to DD-MM-YYYY):")
     bot.register_next_step_handler(msg, step_pdf_range)
 
 def step_pdf_range(m):
     try:
-        # User input handling "01-02-2026 to 05-02-2026"
         txt = m.text.lower().replace('to', ' ').strip()
         parts = txt.split()
-        
-        if len(parts) < 2: return bot.reply_to(m, "❌ Invalid Format. Use: Start to End")
+        if len(parts) < 2: return bot.reply_to(m, "❌ Invalid Format.")
         
         s_date = datetime.strptime(parts[0], "%d-%m-%Y")
-        e_date = datetime.strptime(parts[1], "%d-%m-%Y") + timedelta(days=1) # Include end date fully
+        e_date = datetime.strptime(parts[1], "%d-%m-%Y") + timedelta(days=1)
         
         hist = load_json(DB_HISTORY)
-        data = []
-        for h in hist:
-            h_dt = datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S")
-            if s_date <= h_dt < e_date:
-                data.append(h)
+        data = [h for h in hist if s_date <= datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S") < e_date]
                 
-        if not data: return bot.reply_to(m, "❌ No data in this range.")
+        if not data: return bot.reply_to(m, "❌ No data.")
         
         fname = f"Custom_Quiz.pdf"
         date_str = f"{s_date.strftime('%d-%m-%Y')} to {parts[1]}"
+        generate_and_distribute(m, data, fname, "Custom Question Bank", date_str)
         
-        # Dynamic Title: Question Bank
-        generate_and_send(m, data, fname, "Custom Question Bank", date_str)
-        
-    except Exception as e:
-        bot.reply_to(m, f"❌ Error: {e}")
-
-# Helper to generate and send
-def generate_and_send(m, data, fname, title, date_label):
-    bot.reply_to(m, f"⏳ Generating PDF: {title}...")
-    
-    res = generate_pdf_html(data, fname, title, date_label)
-    
-    if res:
-        caption = (
-            f"📄 **{title}**\n"
-            f"📅 Date: {date_label}\n"
-            f"🔢 Questions: {len(data)}\n"
-            "By: @MockRise"
-        )
-        with open(res, 'rb') as f:
-            bot.send_document(m.chat.id, f, caption=caption)
-    else:
-        bot.reply_to(m, "❌ Failed to generate PDF.")
+    except: bot.reply_to(m, "❌ Error.")
 
 @bot.message_handler(content_types=['text'])
 def handle_json(m):
@@ -377,7 +375,21 @@ def handle_json(m):
         try:
             data = json.loads(m.text)
             quiz_buffer[m.from_user.id] = data
-            bot.reply_to(m, f"✅ Received {len(data)} Qs.\nUse /rssb, /bulk_send, /pdf_daily")
+            
+            # ✅ SHOW ALL OPTIONS AFTER JSON UPLOAD
+            msg = (
+                f"✅ *JSON Received ({len(data)} Qs)*\n\n"
+                f"👇 *Click to Send:*\n"
+                f"/rssb - RSSB/REET\n"
+                f"/ssc - SSC CGL\n"
+                f"/upsc - UPSC/IAS\n"
+                f"/springboard - Springboard\n"
+                f"/kalam - Kalam Academy\n\n"
+                f"🚀 *Bulk Options:*\n"
+                f"/bulk_send - Send to ALL\n"
+                f"/stop - Clear JSON"
+            )
+            bot.reply_to(m, msg, parse_mode='Markdown')
         except: bot.reply_to(m, "❌ Invalid JSON")
 
 if __name__ == "__main__":
