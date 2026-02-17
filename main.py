@@ -1,4 +1,3 @@
-
 import telebot
 import json
 import time
@@ -10,6 +9,12 @@ from flask import Flask
 from datetime import datetime, timedelta
 from weasyprint import HTML
 from jinja2 import Template
+
+==========================================
+
+⚙️ CONFIGURATION
+
+==========================================
 
 BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 MAIN_CHANNEL_ID = "@mockrise"
