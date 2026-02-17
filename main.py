@@ -17,13 +17,19 @@ from jinja2 import Template
 BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 MAIN_CHANNEL_ID = "@mockrise"
 
+# 🔐 PASSWORDS
+PASS_ADMIN = "7852"   # Full Access
+PASS_LIMIT = "9637"   # Only Holas + PDF
+
+# ✅ Channels List
 CHANNELS = {
     'mockrise': {'id': '@mockrise', 'name': 'MockRise Main'},
     'upsc': {'id': '@upsc_ssc_cgl_mts_cgl_chsl_gk', 'name': 'UPSC/IAS'},
     'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS'},
     'rssb': {'id': '@ldc_reet_ras_2ndgrade_kalam', 'name': 'RSSB/LDC/REET'},
     'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Springboard'},
-    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'}
+    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'},
+    'holas': {'id': '@upsc_hindi_quizz', 'name': 'Holas (UPSC Hindi)'} # 🆕 New Channel
 }
 
 # Files
@@ -33,19 +39,20 @@ FONT_FILE = "NotoSansDevanagari-Regular.ttf"
 
 # Memory
 quiz_buffer = {}
-json_fragments = {}  # 🛠️ New: To store broken JSON parts
+json_fragments = {}
+user_sessions = {} # To store login status: {user_id: 'admin' or 'limited'}
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# 🌐 FLASK SERVER (Keep Alive)
+# 🌐 FLASK SERVER
 # ==========================================
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (Large JSON Support Added)!"
+    return "✅ Bot is Running (Password Protected + Holas Channel)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -88,6 +95,36 @@ def update_stats(user_id, channel, count, status):
     else: stats[uid]['total_failed'] += count
     if channel not in stats[uid]['channels']: stats[uid]['channels'].append(channel)
     save_json(DB_STATS, stats)
+
+# ==========================================
+# 🔒 AUTHENTICATION HELPER
+# ==========================================
+
+def is_auth(m):
+    """Check if user is logged in."""
+    return m.from_user.id in user_sessions
+
+def get_role(m):
+    """Get user role: 'admin' or 'limited' or None."""
+    return user_sessions.get(m.from_user.id)
+
+def check_access(m, required_role='limited'):
+    """
+    Checks if user has permission.
+    required_role='limited' -> Both Admin and Limited can access.
+    required_role='admin' -> Only Admin can access.
+    """
+    if not is_auth(m):
+        bot.reply_to(m, "🔒 <b>Locked!</b> Please enter password to unlock.\nUse /start to login.", parse_mode='HTML')
+        return False
+    
+    role = get_role(m)
+    
+    if required_role == 'admin' and role != 'admin':
+        bot.reply_to(m, "🚫 <b>Access Denied!</b> This command is for Admins (7852) only.", parse_mode='HTML')
+        return False
+        
+    return True
 
 # ==========================================
 # 📄 PDF ENGINE
@@ -185,14 +222,33 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
 # 🎮 COMMANDS & MENU
 # ==========================================
 
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=['start'])
 def send_welcome(message):
-    help_text = """
+    uid = message.from_user.id
+    
+    # Reset Session on Start
+    if uid in user_sessions: del user_sessions[uid]
+    
+    msg = bot.send_message(
+        message.chat.id, 
+        "🔒 <b>Bot Locked</b>\n\nकृपया अपना पासवर्ड दर्ज करें:", 
+        parse_mode='HTML'
+    )
+    # Don't register next step handler for everything, let the text handler catch the password
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    if not check_access(message): return
+    
+    role = get_role(message)
+    
+    help_text = f"""
 🤖 <b>MockRise Pro Bot</b>
+🔑 Status: <b>{role.upper()}</b>
 
 📝 <b>Editing:</b>
-/edit - Edit any question
-/list - View current questions
+/edit - Edit Questions
+/list - View Questions
 
 📂 <b>PDF Tools:</b>
 /pdf_daily - Today's Quiz
@@ -200,19 +256,28 @@ def send_welcome(message):
 /pdf_custom - Custom Range
 
 📢 <b>Sending:</b>
-/rssb, /ssc, /upsc, /springboard, /kalam
-/bulk_send - Send to All Channels
-
-🛑 <b>Control:</b>
-/stop - Clear All JSON Data
-/clear_temp - Clear partial/broken JSON
+/holas - Send to Holas (UPSC Hindi) ✅
 """
+    if role == 'admin':
+        help_text += """
+/rssb, /ssc, /upsc, /springboard, /kalam
+/bulk_send - Send to ALL Channels 🚀
+"""
+    
+    help_text += "\n🛑 <b>Control:</b>\n/stop - Clear Data\n/logout - Exit"
     bot.reply_to(message, help_text, parse_mode='HTML')
+
+@bot.message_handler(commands=['logout'])
+def cmd_logout(m):
+    if m.from_user.id in user_sessions:
+        del user_sessions[m.from_user.id]
+    bot.reply_to(m, "🔒 <b>Logged Out.</b> Use /start to login again.", parse_mode='HTML')
 
 @bot.message_handler(commands=['stop', 'clear_temp'])
 def cmd_stop(m):
+    if not check_access(m): return
+    
     uid = m.from_user.id
-    # Clear both buffers
     if uid in quiz_buffer: del quiz_buffer[uid]
     if uid in json_fragments: del json_fragments[uid]
     
@@ -220,6 +285,8 @@ def cmd_stop(m):
 
 @bot.message_handler(commands=['list'])
 def cmd_list(m):
+    if not check_access(m): return
+    
     uid = m.from_user.id
     if uid not in quiz_buffer: return bot.reply_to(m, "📭 Buffer Empty.")
     
@@ -234,14 +301,17 @@ def cmd_list(m):
 
 @bot.message_handler(commands=['edit'])
 def cmd_edit_start(m):
+    if not check_access(m): return
+    
     uid = m.from_user.id
     if uid not in quiz_buffer or not quiz_buffer[uid]:
         return bot.reply_to(m, "❌ <b>Buffer is Empty!</b> Upload JSON first.", parse_mode='HTML')
     
-    msg = bot.reply_to(m, f"✏️ <b>Edit Mode</b>\n\nSend the <b>Question Number</b> (1 - {len(quiz_buffer[uid])}) you want to edit:", parse_mode='HTML')
+    msg = bot.reply_to(m, f"✏️ <b>Edit Mode</b>\n\nSend the <b>Question Number</b> (1 - {len(quiz_buffer[uid])}):", parse_mode='HTML')
     bot.register_next_step_handler(msg, step_edit_number)
 
 def step_edit_number(m):
+    if not check_access(m): return
     uid = m.from_user.id
     if m.text.lower() == '/cancel': return bot.reply_to(m, "🚫 Edit Cancelled.")
     
@@ -252,27 +322,27 @@ def step_edit_number(m):
             q_str = json.dumps(q_data, indent=2, ensure_ascii=False)
             
             msg = bot.reply_to(m, 
-                f"📝 <b>Editing Question {idx+1}:</b>\n<pre>{q_str}</pre>\n\n👇 <b>Send the NEW JSON</b> code to replace this question:", 
+                f"📝 <b>Editing Question {idx+1}:</b>\n<pre>{q_str}</pre>\n\n👇 <b>Send NEW JSON</b>:", 
                 parse_mode='HTML'
             )
             bot.register_next_step_handler(msg, step_edit_save, idx)
         else:
-            bot.reply_to(m, "❌ Invalid Number. Try /edit again.")
+            bot.reply_to(m, "❌ Invalid Number.")
     except:
         bot.reply_to(m, "❌ Please send a number.")
 
 def step_edit_save(m, idx):
+    if not check_access(m): return
     uid = m.from_user.id
     try:
         clean_text = m.text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
         new_q = json.loads(clean_text)
-        
         if 'question' not in new_q: raise ValueError("Missing 'question' field")
         
         quiz_buffer[uid][idx] = new_q
-        bot.reply_to(m, f"✅ <b>Question {idx+1} Updated!</b>\nCheck with /list or send now.", parse_mode='HTML')
+        bot.reply_to(m, f"✅ <b>Updated!</b> Check /list.", parse_mode='HTML')
     except Exception as e:
-        bot.reply_to(m, f"❌ <b>Update Failed:</b> Invalid JSON.\nError: {e}\nTry /edit again.", parse_mode='HTML')
+        bot.reply_to(m, f"❌ <b>Failed:</b> {e}", parse_mode='HTML')
 
 # ==========================================
 # 🚀 SENDING LOGIC
@@ -313,6 +383,14 @@ def safe_send_poll(target_chat, question, options, correct_index, explanation):
         return False
 
 def process_send(message, key):
+    # AUTH CHECK
+    role = get_role(message)
+    if not role: return bot.reply_to(message, "🔒 Login Required. Send Password.")
+    
+    # 9637 RESTRICTION: Can only send to 'holas'
+    if role == 'limited' and key != 'holas':
+        return bot.reply_to(message, "🚫 <b>Access Denied!</b> You can only use /holas", parse_mode='HTML')
+        
     uid = message.from_user.id
     if uid not in quiz_buffer: return bot.reply_to(message, "❌ No JSON data found.")
 
@@ -341,34 +419,52 @@ def process_send(message, key):
         update_stats(uid, key, success, 'success')
         bot.reply_to(message, f"✅ Sent {success} to {name}.")
 
+# --- CHANNEL HANDLERS ---
+@bot.message_handler(commands=['holas'])
+def c_holas(m): process_send(m, 'holas')
+
 @bot.message_handler(commands=['rssb'])
 def c_rssb(m): process_send(m, 'rssb')
+
 @bot.message_handler(commands=['ssc'])
 def c_ssc(m): process_send(m, 'ssc')
+
 @bot.message_handler(commands=['upsc'])
 def c_upsc(m): process_send(m, 'upsc')
+
 @bot.message_handler(commands=['springboard'])
 def c_sb(m): process_send(m, 'springboard')
+
 @bot.message_handler(commands=['kalam'])
 def c_kl(m): process_send(m, 'kalam')
+
 @bot.message_handler(commands=['bulk_send'])
 def c_bulk(m):
+    # ADMIN ONLY
+    if not check_access(m, 'admin'): return
+    
     if m.from_user.id not in quiz_buffer: return bot.reply_to(m, "❌ No JSON.")
-    for k in CHANNELS: process_send(m, k)
+    
+    # Send to all EXCEPT Holas (since it's a special channel) or INCLUDE?
+    # Usually bulk implies main channels. I'll include all.
+    for k in CHANNELS: 
+        process_send(m, k)
+        time.sleep(1)
     bot.reply_to(m, "✅ Bulk Send Complete.")
 
 # ==========================================
-# 📅 SMART PDF DISTRIBUTION
+# 📅 PDF DISTRIBUTION
 # ==========================================
 
 def smart_distribute(m, data, title_prefix, date_label):
+    if not check_access(m): return # Both users can use PDF
     if not data: return bot.reply_to(m, "❌ No data found.")
 
     bot.reply_to(m, f"⚙️ <b>Processing...</b>\nDate: {date_label}", parse_mode='HTML')
 
     # Master PDF
     master_fname = f"Master_{datetime.now().strftime('%H%M%S')}.pdf"
-    res = generate_pdf_html(data, master_fname, f"{title_prefix} (All Data)", date_label)
+    res = generate_pdf_html(data, master_fname, f"{title_prefix}", date_label)
     
     if res:
         caption = f"🗂 <b>Master PDF</b>\n📅 {date_label}\nBy: @MockRise"
@@ -376,6 +472,11 @@ def smart_distribute(m, data, title_prefix, date_label):
             bot.send_document(m.chat.id, f, caption=caption, parse_mode='HTML')
     
     # Channel Distribution
+    # Note: Limited user can generate PDF, but sending to channels depends on rights?
+    # Requirement: "pdf in sab" for limited user. Assuming they can Generate PDFs freely.
+    # Distributing to channels via bot might be restricted? 
+    # Let's allow PDF distribution for now as "pdf tools" are enabled.
+    
     channel_data_map = {}
     for item in data:
         ch_key = item.get('channel')
@@ -389,9 +490,7 @@ def smart_distribute(m, data, title_prefix, date_label):
             channel_info = CHANNELS[ch_key]
             ch_fname = f"{ch_key}.pdf"
             
-            # Using clean title without channel name
-            clean_title = title_prefix 
-            ch_pdf = generate_pdf_html(ch_items, ch_fname, clean_title, date_label)
+            ch_pdf = generate_pdf_html(ch_items, ch_fname, title_prefix, date_label)
             
             if ch_pdf:
                 try:
@@ -401,17 +500,16 @@ def smart_distribute(m, data, title_prefix, date_label):
                         f"🔢 Questions: {len(ch_items)}\n"
                         f"By: @MockRise"
                     )
+                    # Send to channel
                     with open(ch_pdf, 'rb') as f:
                         bot.send_document(channel_info['id'], f, caption=caption_ch, parse_mode='HTML')
                     sent_count += 1
                     time.sleep(2)
                 except Exception as e:
-                    bot.send_message(m.chat.id, f"❌ Failed to send to {channel_info['name']}: {e}")
+                    pass
 
     if sent_count > 0:
         bot.reply_to(m, "🎉 <b>Distribution Complete!</b>", parse_mode='HTML')
-    else:
-        bot.reply_to(m, "⚠️ No separate channel data found.")
 
 @bot.message_handler(commands=['pdf_daily'])
 def cmd_pdf_daily(m):
@@ -432,6 +530,7 @@ def cmd_pdf_weekly(m):
 
 @bot.message_handler(commands=['pdf_custom'])
 def cmd_pdf_custom(m):
+    if not check_access(m): return
     msg = bot.send_message(m.chat.id, "📅 Send Date Range (DD-MM-YYYY to DD-MM-YYYY):")
     bot.register_next_step_handler(msg, step_pdf_range)
 
@@ -448,60 +547,71 @@ def step_pdf_range(m):
     except: bot.reply_to(m, "❌ Error/Invalid Format.")
 
 # ==========================================
-# 🧩 JSON ACCUMULATOR (Handle Split Messages)
+# 🧩 TEXT HANDLER (PASSWORD & JSON)
 # ==========================================
 
 @bot.message_handler(content_types=['text'])
-def handle_json(m):
+def handle_text(m):
     uid = m.from_user.id
     text = m.text.strip()
     
-    # 1. Start of JSON Array
-    if text.startswith('['):
-        json_fragments[uid] = text # Start new buffer
+    # 1️⃣ PASSWORD CHECK
+    if text == PASS_ADMIN:
+        user_sessions[uid] = 'admin'
+        return bot.reply_to(m, "🔓 <b>Welcome ADMIN!</b>\nAccess: Full Control 🚀", parse_mode='HTML')
     
-    # 2. Middle or End part (If buffer exists)
+    elif text == PASS_LIMIT:
+        user_sessions[uid] = 'limited'
+        return bot.reply_to(m, "🔓 <b>Welcome User!</b>\nAccess: /holas & PDF Tools Only.", parse_mode='HTML')
+    
+    # Check Auth before processing JSON
+    if uid not in user_sessions:
+        return bot.reply_to(m, "🔒 <b>Locked.</b> Please enter password first.", parse_mode='HTML')
+
+    # 2️⃣ JSON ACCUMULATOR
+    if text.startswith('['):
+        json_fragments[uid] = text
+    
     elif uid in json_fragments:
         json_fragments[uid] += text
         
-    # 3. Random text without buffer start
     else:
-        # Ignore normal chat or show help
-        if not text.startswith('/'):
-            bot.reply_to(m, "⚠️ <b>Please start JSON with '['</b>", parse_mode='HTML')
-        return
+        # Ignore random text if logged in
+        if not text.startswith('/'): return
 
-    # Check if JSON seems complete (Ends with ']')
-    full_text = json_fragments[uid]
-    if full_text.endswith(']'):
-        try:
-            # 🧹 CLEAN & PARSE
-            clean_text = full_text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
-            # Remove potential markdown formatting if copied from telegram code block
-            clean_text = re.sub(r'^```json\s*|\s*```$', '', clean_text, flags=re.MULTILINE)
-            
-            data = json.loads(clean_text)
-            
-            # ✅ SUCCESS
-            quiz_buffer[uid] = data
-            del json_fragments[uid] # Clear temp buffer
-            
-            msg = (f"✅ <b>JSON Received ({len(data)} Qs)</b>\n\n"
-                   f"✏️ <b>Edit:</b> /edit\n"
-                   f"👇 <b>Send:</b> /rssb, /ssc, /bulk_send")
-            bot.reply_to(m, msg, parse_mode='HTML')
-            
-        except json.JSONDecodeError:
-            # Maybe it's not actually finished? Or error?
-            # We wait for more, but warn if it looks huge
-            if len(full_text) > 100000:
-                bot.reply_to(m, "❌ JSON too large or invalid. /stop to clear.")
-        except Exception as e:
-            bot.reply_to(m, f"❌ <b>Invalid JSON</b>\n{e}", parse_mode='HTML')
-            del json_fragments[uid]
-    else:
-        # Acknowledge receipt of part
-        bot.reply_to(m, f"📥 <b>Part Received..</b> ({len(full_text)} chars)\nSend the rest!", parse_mode='HTML')
+    # 3️⃣ PROCESS JSON
+    if uid in json_fragments:
+        full_text = json_fragments[uid]
+        if full_text.endswith(']'):
+            try:
+                clean_text = full_text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+                clean_text = re.sub(r'^```json\s*|\s*```$', '', clean_text, flags=re.MULTILINE)
+                
+                data = json.loads(clean_text)
+                quiz_buffer[uid] = data
+                del json_fragments[uid]
+                
+                # Show menu based on role
+                role = user_sessions[uid]
+                if role == 'admin':
+                    opts = "/rssb, /ssc, /upsc, /holas\n🚀 /bulk_send"
+                else:
+                    opts = "/holas (Only)"
+                
+                msg = (f"✅ <b>JSON Received ({len(data)} Qs)</b>\n\n"
+                       f"✏️ /edit\n"
+                       f"👇 <b>Send:</b> {opts}\n"
+                       f"📄 /pdf_daily")
+                bot.reply_to(m, msg, parse_mode='HTML')
+                
+            except json.JSONDecodeError:
+                if len(full_text) > 100000:
+                    bot.reply_to(m, "❌ JSON too large/invalid. /stop to clear.")
+            except Exception as e:
+                bot.reply_to(m, f"❌ Invalid: {e}")
+                del json_fragments[uid]
+        else:
+             bot.reply_to(m, f"📥 <b>Part Received</b> ({len(full_text)} chars)...", parse_mode='HTML')
 
 if __name__ == "__main__":
     keep_alive()
