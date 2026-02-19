@@ -5,7 +5,7 @@ import os
 import threading
 import requests
 from flask import Flask
-from datetime import datetime, timedelta
+from datetime import datetime
 from weasyprint import HTML
 from jinja2 import Template
 from telebot.apihelper import ApiTelegramException
@@ -53,7 +53,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (Advanced Fragment & Spoiler Active)!"
+    return "✅ Bot is Running (Private Chat Fixed & Batching Active)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -207,24 +207,20 @@ def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text)
 
 def safe_send_poll(target_chat, question, options, correct_index, explanation):
     try:
-        # 1. Handle Oversized Question (Limit ~250)
         poll_q = question
         sent_q_msg = None
         if len(question) > 250:
             sent_q_msg = bot.send_message(target_chat, f"❓ <b>प्रश्न:</b>\n{question}", parse_mode='HTML')
             poll_q = "👆 ऊपर दिए गए प्रश्न का सही विकल्प चुनें:"
 
-        # 2. Options Limit Safety (Max 100 char per option)
-        safe_options = [opt[:97] + "..." if len(opt) > 100 else opt for opt in options]
-
-        # 3. Handle Oversized Explanation & Spoiler (Limit ~200)
+        safe_options = [str(opt)[:97] + "..." if len(str(opt)) > 100 else str(opt) for opt in options]
         poll_e = explanation
         send_separate_exp = False
+        
         if len(explanation) > 190:
             poll_e = explanation[:190] + "..."
             send_separate_exp = True
 
-        # Send The Poll
         poll_msg = bot.send_poll(
             chat_id=target_chat, 
             question=poll_q, 
@@ -236,7 +232,6 @@ def safe_send_poll(target_chat, question, options, correct_index, explanation):
             reply_to_message_id=sent_q_msg.message_id if sent_q_msg else None
         )
 
-        # 4. Send spoiler message if explanation was too big
         if send_separate_exp:
             bot.send_message(
                 target_chat, 
@@ -249,6 +244,10 @@ def safe_send_poll(target_chat, question, options, correct_index, explanation):
         if e.error_code == 429:
             time.sleep(int(e.result_json['parameters']['retry_after']) + 1)
             return safe_send_poll(target_chat, question, options, correct_index, explanation)
+        print(f"Error sending poll: {e}")
+        return False
+    except Exception as e:
+        print(f"Unknown error in poll: {e}")
         return False
 
 def safe_send_message(target_chat, text):
@@ -262,13 +261,16 @@ def safe_send_message(target_chat, text):
         return False
 
 def process_send(message, key):
+    # SECURITY: Only allow sending from Private Bot DM
+    if message.chat.type != 'private': return
+    
     uid = message.from_user.id
     if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: 
         return bot.reply_to(message, "❌ आपके पास भेजने के लिए कोई प्रश्न नहीं हैं। पहले JSON भेजें।")
     
     target = CHANNELS[key]['id']
     data = quiz_buffer[uid]
-    bot.reply_to(message, f"🚀 Sending {len(data)} items to {CHANNELS[key]['name']}...")
+    bot.reply_to(message, f"🚀 Sending {len(data)} items to {CHANNELS[key]['name']}... कृपया प्रतीक्षा करें।")
     
     success = 0
     one_liners_batch = []
@@ -277,20 +279,22 @@ def process_send(message, key):
         if 'options' in item: # MCQ Processing
             if safe_send_poll(target, f"Q{i+1}. {item['question']}", item['options'], item.get('correct_index', 0), item.get('explanation', 'MockRise')):
                 success += 1
-            time.sleep(0.1)
+            time.sleep(0.3)
         elif 'answer' in item: # One-Liner Batch Collection
             one_liners_batch.append(f"🔹 <b>Q{i+1}. {item['question']}</b>\n👉 <b>उत्तर:</b> {item['answer']}\n")
             success += 1
             
-    # Batch Send One-Liners (To avoid spam)
+    # ONE-LINER BATCH SENDER (सब एक मैसेज में)
     if one_liners_batch:
         current_msg = "📝 <b>महत्वपूर्ण वन-लाइनर प्रश्न:</b>\n\n"
         for ol in one_liners_batch:
-            if len(current_msg) + len(ol) > 4000: # Telegram message limit handler
+            # Telegram has 4096 character limit per message
+            if len(current_msg) + len(ol) > 4000: 
                 safe_send_message(target, current_msg)
-                time.sleep(1)
+                time.sleep(2)
                 current_msg = "📝 <b>वन-लाइनर (Cont..):</b>\n\n"
             current_msg += ol + "\n"
+            
         if current_msg.strip():
             safe_send_message(target, current_msg)
         
@@ -299,7 +303,7 @@ def process_send(message, key):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for q in data: hist.append({'timestamp': ts, 'channel': key, 'data': q})
         save_json(DB_HISTORY, hist)
-        bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न भेज दिए गए।")
+        bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न चैनल पर भेज दिए गए हैं!")
 
 # ==========================================
 # 🕒 AUTO PDF BROADCAST LOGIC (DAILY/WEEKLY)
@@ -358,17 +362,17 @@ def auto_scheduler_thread():
 threading.Thread(target=auto_scheduler_thread, daemon=True).start()
 
 # ==========================================
-# 🎮 COMMANDS & MENU
+# 🎮 COMMANDS & MENU (Private Only)
 # ==========================================
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    if message.chat.type != 'private': return  # Security Fix: No Group Spam
+    
     uid = message.from_user.id
     users = load_json(DB_USERS); users[str(uid)] = message.from_user.first_name; save_json(DB_USERS, users)
-    if message.chat.type != 'private': return
     if uid not in user_sessions: user_sessions[uid] = 'user'
     
-    # Reset fragment logic on start
     if uid in json_fragments: del json_fragments[uid]
         
     welcome_msg = (
@@ -387,6 +391,7 @@ def ask_password(message):
 
 @bot.message_handler(commands=['cancel'])
 def cancel_json(message):
+    if message.chat.type != 'private': return
     uid = message.from_user.id
     if uid in json_fragments:
         del json_fragments[uid]
@@ -396,6 +401,7 @@ def cancel_json(message):
 
 @bot.message_handler(commands=['help'])
 def cmd_help(m):
+    if m.chat.type != 'private': return
     uid = m.from_user.id
     role = user_sessions.get(uid, 'user')
     q_count = len(quiz_buffer.get(uid, []))
@@ -413,6 +419,7 @@ def cmd_help(m):
 
 @bot.message_handler(commands=['stats', 'broadcast'])
 def admin_tools(m):
+    if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ Access Denied!")
     if m.text.startswith('/stats'):
         bot.reply_to(m, f"📊 <b>Stats:</b>\nTotal Users: {len(load_json(DB_USERS))}", parse_mode='HTML')
@@ -426,6 +433,7 @@ def admin_tools(m):
 
 @bot.message_handler(commands=['send_daily_all', 'send_weekly_all'])
 def manual_pdf_broadcast(m):
+    if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ Access Denied!")
     bot.reply_to(m, "🚀 सभी चैनलों में PDF भेजा जा रहा है... कृपया प्रतीक्षा करें।")
     if m.text == '/send_daily_all':
@@ -437,16 +445,19 @@ def manual_pdf_broadcast(m):
 
 @bot.message_handler(commands=['mockrise', 'rssb', 'ssc', 'upsc', 'springboard', 'kalam'])
 def admin_ch_handle(m):
+    if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
     process_send(m, m.text.replace('/', ''))
 
 @bot.message_handler(commands=['holas'])
 def holas_ch_handle(m):
+    if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) not in ['admin', 'limited']: return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
     process_send(m, m.text.replace('/', ''))
 
 @bot.message_handler(commands=['pdf_daily', 'pdf_oneliner'])
 def cmd_pdf(m):
+    if m.chat.type != 'private': return
     uid = m.from_user.id
     is_oneliner = 'oneliner' in m.text
     if uid in quiz_buffer and len(quiz_buffer[uid]) > 0:
@@ -466,12 +477,14 @@ def cmd_pdf(m):
 
 @bot.message_handler(commands=['edit'])
 def cmd_edit(m):
+    if m.chat.type != 'private': return
     uid = m.from_user.id
     if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: return bot.reply_to(m, "❌ आपके पास एडिट करने के लिए कोई प्रश्न नहीं है।")
     msg = bot.reply_to(m, f"Q No (1 से {len(quiz_buffer[uid])} के बीच) बताएँ जिसे एडिट करना है:")
     bot.register_next_step_handler(msg, step_edit_num)
 
 def step_edit_num(m):
+    if m.chat.type != 'private': return
     try:
         idx = int(m.text) - 1
         q = quiz_buffer[m.from_user.id][idx]
@@ -480,6 +493,7 @@ def step_edit_num(m):
     except: bot.reply_to(m, "❌ गलत नंबर।")
 
 def step_edit_final(m, idx):
+    if m.chat.type != 'private': return
     try:
         quiz_buffer[m.from_user.id][idx] = json.loads(m.text)
         bot.reply_to(m, "✅ प्रश्न सफलतापूर्वक अपडेट कर दिया गया।")
@@ -491,6 +505,9 @@ def step_edit_final(m, idx):
 
 @bot.message_handler(content_types=['text'])
 def handle_text(m):
+    # SECURITY FIX: Completely ignore messages from groups/channels
+    if m.chat.type != 'private': return
+    
     uid = m.from_user.id
     text = m.text.strip()
     
@@ -504,17 +521,15 @@ def handle_text(m):
     if uid not in user_sessions: user_sessions[uid] = 'user'
     role = user_sessions[uid]
 
-    # JSON Fragmentation Accumulator Logic
     if text.startswith('[') and uid not in json_fragments:
         json_fragments[uid] = text
     elif uid in json_fragments:
         json_fragments[uid] += text
 
-    # Try parsing if user is in fragmentation mode
     if uid in json_fragments:
         try:
             quiz_buffer[uid] = json.loads(json_fragments[uid])
-            del json_fragments[uid] # Clear memory if successfully loaded
+            del json_fragments[uid] 
         except json.JSONDecodeError:
             return bot.reply_to(m, f"⏳ <b>JSON का हिस्सा प्राप्त हुआ...</b>\n(लंबाई: {len(json_fragments[uid])} characters)\n\nबाकी का हिस्सा भेजें।\nअगर अटक जाए तो /cancel दबाएं।", parse_mode='HTML')
         except Exception as e:
@@ -524,7 +539,6 @@ def handle_text(m):
         if not text.startswith('/'):
             return bot.reply_to(m, "❌ <b>कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।</b>", parse_mode='HTML')
 
-    # Success Reply Setup
     if uid in quiz_buffer and not text.startswith('/'):
         q_count = len(quiz_buffer[uid])
         msg = f"✅ <b>डेटा प्राप्त हुआ ({q_count} प्रश्न तैयार हैं)</b>\n\n"
