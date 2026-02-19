@@ -5,7 +5,7 @@ import os
 import threading
 import requests
 from flask import Flask
-from datetime import datetime
+from datetime import datetime, timedelta
 from weasyprint import HTML
 from jinja2 import Template
 from telebot.apihelper import ApiTelegramException
@@ -18,8 +18,8 @@ BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 MAIN_CHANNEL_ID = "@mockrise"
 
 # 🔐 PASSWORDS
-PASS_ADMIN = "7852"   # Full Access (Admin Panel)
-PASS_LIMIT = "9637"   # Only Holas + PDF (Holas Panel)
+PASS_ADMIN = "7852"   # Full Access
+PASS_LIMIT = "9637"   # Only Holas + PDF
 
 # ✅ Channels List
 CHANNELS = {
@@ -46,14 +46,14 @@ user_sessions = {}
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# 🌐 FLASK SERVER (Keep-Alive)
+# 🌐 FLASK SERVER
 # ==========================================
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (JSON Only + One-Liners Active)!"
+    return "✅ Bot is Running (Advanced Fragment & Spoiler Active)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -93,7 +93,7 @@ def check_font():
     return os.path.abspath(FONT_FILE)
 
 def generate_pdf_html(data_list, filename, title_text, date_range_text):
-    """MCQ PDF Generator"""
+    if not data_list: return None
     font_path = check_font()
     html_template = """
     <!DOCTYPE html>
@@ -142,8 +142,6 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
             <div class="answer">उत्तर: ({{ labels[ans_idx] if ans_idx < 4 else ans_idx+1 }})</div>
             {{ current_item.explanation }}
         </div>
-        {% else %}
-        <div class="solution-box"><div class="answer">उत्तर: {{ current_item.answer }}</div></div>
         {% endif %}
     </div>
     {% endfor %}
@@ -157,7 +155,7 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
     except: return None
 
 def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text):
-    """One-Liner PDF Generator"""
+    if not data_list: return None
     font_path = check_font()
     html_template = """
     <!DOCTYPE html>
@@ -209,13 +207,43 @@ def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text)
 
 def safe_send_poll(target_chat, question, options, correct_index, explanation):
     try:
-        poll_q = question[:250]
-        poll_e = explanation[:190]
-        poll_msg = bot.send_poll(chat_id=target_chat, question=poll_q, options=options, type='quiz', 
-                                 correct_option_id=correct_index, explanation=poll_e, is_anonymous=True)
+        # 1. Handle Oversized Question (Limit ~250)
+        poll_q = question
+        sent_q_msg = None
+        if len(question) > 250:
+            sent_q_msg = bot.send_message(target_chat, f"❓ <b>प्रश्न:</b>\n{question}", parse_mode='HTML')
+            poll_q = "👆 ऊपर दिए गए प्रश्न का सही विकल्प चुनें:"
+
+        # 2. Options Limit Safety (Max 100 char per option)
+        safe_options = [opt[:97] + "..." if len(opt) > 100 else opt for opt in options]
+
+        # 3. Handle Oversized Explanation & Spoiler (Limit ~200)
+        poll_e = explanation
+        send_separate_exp = False
         if len(explanation) > 190:
-            bot.send_message(target_chat, f"💡 <b>Detailed Solution:</b>\n\n{explanation}", 
-                             reply_to_message_id=poll_msg.message_id, parse_mode='HTML')
+            poll_e = explanation[:190] + "..."
+            send_separate_exp = True
+
+        # Send The Poll
+        poll_msg = bot.send_poll(
+            chat_id=target_chat, 
+            question=poll_q, 
+            options=safe_options, 
+            type='quiz', 
+            correct_option_id=correct_index, 
+            explanation=poll_e, 
+            is_anonymous=True,
+            reply_to_message_id=sent_q_msg.message_id if sent_q_msg else None
+        )
+
+        # 4. Send spoiler message if explanation was too big
+        if send_separate_exp:
+            bot.send_message(
+                target_chat, 
+                f"💡 <b>विस्तृत व्याख्या:</b>\n<tg-spoiler>{explanation}</tg-spoiler>", 
+                reply_to_message_id=poll_msg.message_id, 
+                parse_mode='HTML'
+            )
         return True
     except ApiTelegramException as e:
         if e.error_code == 429:
@@ -241,17 +269,30 @@ def process_send(message, key):
     target = CHANNELS[key]['id']
     data = quiz_buffer[uid]
     bot.reply_to(message, f"🚀 Sending {len(data)} items to {CHANNELS[key]['name']}...")
+    
     success = 0
+    one_liners_batch = []
     
     for i, item in enumerate(data):
-        if 'options' in item: # MCQ
+        if 'options' in item: # MCQ Processing
             if safe_send_poll(target, f"Q{i+1}. {item['question']}", item['options'], item.get('correct_index', 0), item.get('explanation', 'MockRise')):
                 success += 1
-        elif 'answer' in item: # One-Liner
-            msg_text = f"🔹 <b>Q{i+1}. {item['question']}</b>\n\n👉 <b>उत्तर:</b> {item['answer']}"
-            if safe_send_message(target, msg_text):
-                success += 1
-        time.sleep(0.1)
+            time.sleep(0.1)
+        elif 'answer' in item: # One-Liner Batch Collection
+            one_liners_batch.append(f"🔹 <b>Q{i+1}. {item['question']}</b>\n👉 <b>उत्तर:</b> {item['answer']}\n")
+            success += 1
+            
+    # Batch Send One-Liners (To avoid spam)
+    if one_liners_batch:
+        current_msg = "📝 <b>महत्वपूर्ण वन-लाइनर प्रश्न:</b>\n\n"
+        for ol in one_liners_batch:
+            if len(current_msg) + len(ol) > 4000: # Telegram message limit handler
+                safe_send_message(target, current_msg)
+                time.sleep(1)
+                current_msg = "📝 <b>वन-लाइनर (Cont..):</b>\n\n"
+            current_msg += ol + "\n"
+        if current_msg.strip():
+            safe_send_message(target, current_msg)
         
     if success > 0:
         hist = load_json(DB_HISTORY)
@@ -259,6 +300,62 @@ def process_send(message, key):
         for q in data: hist.append({'timestamp': ts, 'channel': key, 'data': q})
         save_json(DB_HISTORY, hist)
         bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न भेज दिए गए।")
+
+# ==========================================
+# 🕒 AUTO PDF BROADCAST LOGIC (DAILY/WEEKLY)
+# ==========================================
+
+def get_filtered_history(days=1):
+    hist = load_json(DB_HISTORY)
+    now = datetime.now()
+    mcq_data, oneliner_data = [], []
+    for h in hist:
+        try:
+            ts = datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S")
+            if (now - ts).days < days:
+                item = h.get('data', h)
+                if 'options' in item: mcq_data.append(item)
+                elif 'answer' in item: oneliner_data.append(item)
+        except: pass
+    return mcq_data, oneliner_data
+
+def broadcast_pdfs_to_all_channels(days=1, title_prefix="Daily"):
+    mcq_data, oneliner_data = get_filtered_history(days)
+    if not mcq_data and not oneliner_data: return
+    
+    date_str = datetime.now().strftime("%d %b %Y")
+    mcq_pdf = generate_pdf_html(mcq_data, f"{title_prefix}_MCQ_{date_str}.pdf", f"MockRise {title_prefix} MCQ", date_str) if mcq_data else None
+    oneliner_pdf = generate_oneliner_pdf_html(oneliner_data, f"{title_prefix}_OneLiner_{date_str}.pdf", f"MockRise {title_prefix} One-Liners", date_str) if oneliner_data else None
+    
+    for ch_key, ch_info in CHANNELS.items():
+        target = ch_info['id']
+        try:
+            if mcq_pdf:
+                with open(mcq_pdf, 'rb') as f:
+                    bot.send_document(target, f, caption=f"📚 <b>{title_prefix} MCQ Revision PDF</b>\n📅 Date: {date_str}\n\nJoin @mockrise for more!", parse_mode='HTML')
+            if oneliner_pdf:
+                with open(oneliner_pdf, 'rb') as f:
+                    bot.send_document(target, f, caption=f"📘 <b>{title_prefix} One-Liner PDF</b>\n📅 Date: {date_str}\n\nJoin @mockrise for more!", parse_mode='HTML')
+        except: pass
+        time.sleep(1)
+        
+    if mcq_pdf and os.path.exists(mcq_pdf): os.remove(mcq_pdf)
+    if oneliner_pdf and os.path.exists(oneliner_pdf): os.remove(oneliner_pdf)
+
+def auto_scheduler_thread():
+    while True:
+        try:
+            now = datetime.now()
+            if now.hour == 21 and now.minute == 0:
+                broadcast_pdfs_to_all_channels(days=1, title_prefix="Daily")
+                time.sleep(60)
+            if now.weekday() == 6 and now.hour == 10 and now.minute == 0:
+                broadcast_pdfs_to_all_channels(days=7, title_prefix="Weekly")
+                time.sleep(60)
+        except: pass
+        time.sleep(30)
+
+threading.Thread(target=auto_scheduler_thread, daemon=True).start()
 
 # ==========================================
 # 🎮 COMMANDS & MENU
@@ -270,13 +367,16 @@ def send_welcome(message):
     users = load_json(DB_USERS); users[str(uid)] = message.from_user.first_name; save_json(DB_USERS, users)
     if message.chat.type != 'private': return
     if uid not in user_sessions: user_sessions[uid] = 'user'
+    
+    # Reset fragment logic on start
+    if uid in json_fragments: del json_fragments[uid]
         
     welcome_msg = (
         f"👋 <b>नमस्ते {message.from_user.first_name}! MockRise Bot में आपका स्वागत है।</b>\n\n"
-        f"🚨 <b>नोट:</b> अब यह बोट केवल <b>JSON कोड</b> स्वीकार करता है। सादा टेक्स्ट सपोर्ट हटा दिया गया है।\n\n"
-        f"<b>MCQ या One-Liner</b> का JSON कोड भेजें और PDF बनाएँ।\n"
-        f"🔒 <b>Admin/Holas Access:</b> /password\n"
-        f"ℹ️ <b>मदद:</b> /help"
+        f"🚨 <b>नोट:</b> केवल <b>JSON कोड</b> स्वीकार्य है। (Large JSON bhi supported hai)\n"
+        f"🔒 <b>Admin Access:</b> /password\n"
+        f"ℹ️ <b>मदद:</b> /help\n"
+        f"🚫 <b>कैंसिल:</b> /cancel (अगर JSON अटक जाए)"
     )
     bot.send_message(message.chat.id, welcome_msg, parse_mode='HTML')
 
@@ -285,18 +385,30 @@ def ask_password(message):
     if message.chat.type != 'private': return
     bot.reply_to(message, "🔑 <b>कृपया अपना पासवर्ड टाइप करके भेजें:</b>", parse_mode='HTML')
 
+@bot.message_handler(commands=['cancel'])
+def cancel_json(message):
+    uid = message.from_user.id
+    if uid in json_fragments:
+        del json_fragments[uid]
+        bot.reply_to(message, "🚫 <b>मेमोरी साफ़ कर दी गई है।</b>\nकृपया अपना JSON दोबारा भेजें।", parse_mode='HTML')
+    else:
+        bot.reply_to(message, "✅ मेमोरी पहले से साफ़ है।")
+
 @bot.message_handler(commands=['help'])
 def cmd_help(m):
     uid = m.from_user.id
     role = user_sessions.get(uid, 'user')
     q_count = len(quiz_buffer.get(uid, []))
-    txt = f"🤖 <b>MockRise Pro Bot</b>\n👤 <b>Status:</b> {role.upper()}\n📝 <b>बनाए गए प्रश्न (Buffer):</b> {q_count}\n\n"
+    txt = f"🤖 <b>MockRise Pro Bot</b>\n👤 <b>Status:</b> {role.upper()}\n📝 <b>बनाए गए प्रश्न:</b> {q_count}\n\n"
     if role == 'admin': 
-        txt += "👑 <b>Admin Panel:</b>\nचैनल: /mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard\nटूल्स: /edit, /pdf_daily, /pdf_oneliner, /stats, /broadcast"
+        txt += "👑 <b>Admin Panel:</b>\n"
+        txt += "चैनल: /mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard\n"
+        txt += "<b>Auto PDFs:</b>\n/send_daily_all - आज का PDF\n/send_weekly_all - हफ्ते का PDF\n"
+        txt += "टूल्स: /edit, /pdf_daily, /pdf_oneliner, /stats, /broadcast, /cancel"
     elif role == 'limited':
-        txt += "🔹 <b>Holas Panel:</b>\nचैनल: /holas\nटूल्स: /edit, /pdf_daily, /pdf_oneliner"
+        txt += "🔹 <b>Holas Panel:</b>\nचैनल: /holas\nटूल्स: /edit, /pdf_daily, /pdf_oneliner, /cancel"
     else:
-        txt += "👤 <b>User Panel:</b>\n/pdf_daily - MCQ PDF\n/pdf_oneliner - वन-लाइनर PDF\n/edit - प्रश्नों को एडिट करें"
+        txt += "👤 <b>User Panel:</b>\n/pdf_daily - MCQ PDF\n/pdf_oneliner - वन-लाइनर PDF\n/edit - एडिट\n/cancel - JSON साफ़ करें"
     bot.reply_to(m, txt, parse_mode='HTML')
 
 @bot.message_handler(commands=['stats', 'broadcast'])
@@ -311,6 +423,17 @@ def admin_tools(m):
                 try: bot.send_message(u, f"📢 <b>Announcement:</b>\n\n{text}", parse_mode='HTML')
                 except: pass
             bot.reply_to(m, "✅ Broadcast Done.")
+
+@bot.message_handler(commands=['send_daily_all', 'send_weekly_all'])
+def manual_pdf_broadcast(m):
+    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ Access Denied!")
+    bot.reply_to(m, "🚀 सभी चैनलों में PDF भेजा जा रहा है... कृपया प्रतीक्षा करें।")
+    if m.text == '/send_daily_all':
+        broadcast_pdfs_to_all_channels(days=1, title_prefix="Daily")
+        bot.reply_to(m, "✅ Daily PDF सभी चैनलों में भेज दिया गया है!")
+    else:
+        broadcast_pdfs_to_all_channels(days=7, title_prefix="Weekly")
+        bot.reply_to(m, "✅ Weekly PDF सभी चैनलों में भेज दिया गया है!")
 
 @bot.message_handler(commands=['mockrise', 'rssb', 'ssc', 'upsc', 'springboard', 'kalam'])
 def admin_ch_handle(m):
@@ -363,7 +486,7 @@ def step_edit_final(m, idx):
     except: bot.reply_to(m, "❌ JSON फॉर्मेट गलत है, अपडेट फेल।")
 
 # ==========================================
-# 🧩 STRICT JSON HANDLER
+# 🧩 ROBUST FRAGMENTED JSON HANDLER
 # ==========================================
 
 @bot.message_handler(content_types=['text'])
@@ -381,43 +504,38 @@ def handle_text(m):
     if uid not in user_sessions: user_sessions[uid] = 'user'
     role = user_sessions[uid]
 
-    # JSON Parsing Logic Only
-    if text.startswith('['):
-        if text.endswith(']'):
-            try:
-                quiz_buffer[uid] = json.loads(text)
-            except: return bot.reply_to(m, "❌ JSON Parsing Error! कोड सही नहीं है।")
-        else:
-            json_fragments[uid] = text
-            return bot.reply_to(m, "⏳ JSON का पहला हिस्सा मिल गया, बाकी का हिस्सा भेजें...")
+    # JSON Fragmentation Accumulator Logic
+    if text.startswith('[') and uid not in json_fragments:
+        json_fragments[uid] = text
     elif uid in json_fragments:
         json_fragments[uid] += text
-        if json_fragments[uid].endswith(']'):
-            try:
-                quiz_buffer[uid] = json.loads(json_fragments[uid])
-                del json_fragments[uid]
-            except: 
-                del json_fragments[uid]
-                return bot.reply_to(m, "❌ JSON Parsing Error! कोड सही नहीं है।")
-        else:
-            return bot.reply_to(m, "⏳ JSON प्राप्त हो रहा है, और भेजें...")
+
+    # Try parsing if user is in fragmentation mode
+    if uid in json_fragments:
+        try:
+            quiz_buffer[uid] = json.loads(json_fragments[uid])
+            del json_fragments[uid] # Clear memory if successfully loaded
+        except json.JSONDecodeError:
+            return bot.reply_to(m, f"⏳ <b>JSON का हिस्सा प्राप्त हुआ...</b>\n(लंबाई: {len(json_fragments[uid])} characters)\n\nबाकी का हिस्सा भेजें।\nअगर अटक जाए तो /cancel दबाएं।", parse_mode='HTML')
+        except Exception as e:
+            del json_fragments[uid]
+            return bot.reply_to(m, f"❌ Error: {str(e)}\n\n/cancel करें और दोबारा भेजें।")
     else:
         if not text.startswith('/'):
-            return bot.reply_to(m, "❌ <b>कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।</b>\n\nसादे टेक्स्ट का सपोर्ट हटा दिया गया है।", parse_mode='HTML')
+            return bot.reply_to(m, "❌ <b>कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।</b>", parse_mode='HTML')
 
+    # Success Reply Setup
     if uid in quiz_buffer and not text.startswith('/'):
         q_count = len(quiz_buffer[uid])
         msg = f"✅ <b>डेटा प्राप्त हुआ ({q_count} प्रश्न तैयार हैं)</b>\n\n"
         msg += f"✏️ /edit - प्रश्नों में सुधार करें\n"
-        msg += f"📄 /pdf_daily - MCQ PDF बनाएँ\n"
-        msg += f"📄 /pdf_oneliner - वन-लाइनर PDF बनाएँ\n\n"
+        msg += f"📄 /pdf_daily - MCQ PDF\n"
+        msg += f"📄 /pdf_oneliner - वन-लाइनर PDF\n\n"
         
         if role == 'admin':
-            msg += "👇 <b>चैनल पर भेजने के लिए क्लिक करें:</b>\n/mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard"
+            msg += "👇 <b>चैनल पर भेजें:</b>\n/mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard"
         elif role == 'limited':
-            msg += "👇 <b>चैनल पर भेजने के लिए क्लिक करें:</b>\n/holas"
-        else:
-            msg += "🔒 <i>नोट: क्विज़ को चैनल पर पब्लिश करने के लिए Admin या Holas एक्सेस होना चाहिए (/password)।</i>"
+            msg += "👇 <b>चैनल पर भेजें:</b>\n/holas"
             
         bot.reply_to(m, msg, parse_mode='HTML')
 
