@@ -19,8 +19,8 @@ BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
 MAIN_CHANNEL_ID = "@mockrise"
 
 # 🔐 PASSWORDS
-PASS_ADMIN = "7852"   # Full Access
-PASS_LIMIT = "9637"   # Only Holas + PDF
+PASS_ADMIN = "7852"   # Full Access (Admin Panel)
+PASS_LIMIT = "9637"   # Only Holas + PDF (Holas Panel)
 
 # ✅ Channels List
 CHANNELS = {
@@ -36,25 +36,25 @@ CHANNELS = {
 # Files
 DB_STATS = "user_stats.json"
 DB_HISTORY = "history.json"
-DB_USERS = "users_db.json" # New: To store user IDs for broadcast
+DB_USERS = "users_db.json"
 FONT_FILE = "NotoSansDevanagari-Regular.ttf"
 
 # Memory
 quiz_buffer = {}
 json_fragments = {}
-user_sessions = {} 
+user_sessions = {}
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# 🌐 FLASK SERVER
+# 🌐 FLASK SERVER (Keep-Alive)
 # ==========================================
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (With Anti-Flood & Broadcast)!"
+    return "✅ Bot is Running (User/Admin/Holas Panels Active)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -66,7 +66,7 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# 📂 DATA HANDLING & ANALYTICS
+# 📂 DATA HANDLING & PARSER
 # ==========================================
 
 def load_json(filename):
@@ -80,67 +80,33 @@ def save_json(filename, data):
         with open(filename, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
     except: pass
 
-def register_user(user):
-    """Save user ID for broadcast and stats"""
-    users = load_json(DB_USERS)
-    uid = str(user.id)
-    if uid not in users:
-        users[uid] = {
-            'first_name': user.first_name,
-            'username': user.username,
-            'joined_at': str(datetime.now())
-        }
-        save_json(DB_USERS, users)
-
-def add_to_history(questions, channel_key):
-    history = load_json(DB_HISTORY)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for q in questions:
-        history.append({'timestamp': timestamp, 'channel': channel_key, 'data': q})
-    # Keep last 60 days only
-    cutoff = datetime.now() - timedelta(days=60)
-    history = [h for h in history if datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S") > cutoff]
-    save_json(DB_HISTORY, history)
-
-def update_stats(user_id, channel, count, status):
-    stats = load_json(DB_STATS)
-    uid = str(user_id)
-    if uid not in stats: stats[uid] = {'total_sent': 0, 'total_failed': 0, 'channels': [], 'history': []}
-    if status == 'success': stats[uid]['total_sent'] += count
-    else: stats[uid]['total_failed'] += count
-    if channel not in stats[uid]['channels']: stats[uid]['channels'].append(channel)
-    save_json(DB_STATS, stats)
+def text_to_json_parser(text):
+    """बिना कोडिंग के सादे टेक्स्ट को JSON में बदलने के लिए"""
+    questions = []
+    blocks = re.split(r'\n(?=[Qq]?\d+[\.\)])', text)
+    for block in blocks:
+        try:
+            lines = [l.strip() for l in block.split('\n') if l.strip()]
+            if len(lines) < 3: continue
+            q_text = re.sub(r'^[Qq]?\d+[\.\)]\s*', '', lines[0])
+            options = []
+            ans_idx = 0
+            explanation = "MockRise.com"
+            for line in lines[1:]:
+                if re.match(r'^[A-Dd1-4\(\)]+[\.\)]', line):
+                    options.append(re.sub(r'^[A-Dd1-4\(\)]+[\.\)]\s*', '', line))
+                elif "Ans:" in line or "उत्तर:" in line:
+                    val = re.search(r'\d+|[A-D]', line).group()
+                    ans_idx = int(val)-1 if val.isdigit() else ord(val.upper())-65
+                elif "Exp:" in line or "व्याख्या:" in line:
+                    explanation = line.split(":", 1)[1].strip()
+            if q_text and options:
+                questions.append({"question": q_text, "options": options[:4], "correct_index": ans_idx, "explanation": explanation})
+        except: continue
+    return questions
 
 # ==========================================
-# 🔒 AUTHENTICATION
-# ==========================================
-
-def is_auth(m):
-    # Groups are always "auth" for basic commands to avoid locking spam
-    if m.chat.type in ['group', 'supergroup']:
-        return True
-    return m.from_user.id in user_sessions
-
-def get_role(m):
-    if m.chat.type in ['group', 'supergroup']: return 'group_admin'
-    return user_sessions.get(m.from_user.id)
-
-def check_access(m, required_role='limited'):
-    if not is_auth(m):
-        bot.reply_to(m, "🔒 <b>Locked!</b> Please enter password first.", parse_mode='HTML')
-        return False
-    
-    role = get_role(m)
-    
-    # If admin required, strictly check for 'admin' role
-    if required_role == 'admin' and role != 'admin':
-        bot.reply_to(m, "🚫 <b>Access Denied!</b> Admin only.", parse_mode='HTML')
-        return False
-        
-    return True
-
-# ==========================================
-# 📄 PDF ENGINE (RESTORED ORIGINAL)
+# 📄 PDF ENGINE (Original Design)
 # ==========================================
 
 def check_font():
@@ -155,7 +121,6 @@ def check_font():
 def generate_pdf_html(data_list, filename, title_text, date_range_text):
     font_path = check_font()
     
-    # Original Detailed Template
     html_template = """
     <!DOCTYPE html>
     <html lang="hi">
@@ -201,402 +166,254 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
     <div class="top-line"></div>
     {% for item in items %}
     <div class="question-block">
-        <div class="q-text">Q{{ loop.index }}. {{ item.data.question }}</div>
+        <div class="q-text">Q{{ loop.index }}. {{ item.data.question if item.data else item.question }}</div>
         <div class="options">
             {% set labels = ['(A)', '(B)', '(C)', '(D)'] %}
-            {% for opt in item.data.options %}
+            {% set current_item = item.data if item.data else item %}
+            {% for opt in current_item.options %}
                 <div class="option">{{ labels[loop.index0] if loop.index0 < 4 else loop.index }} {{ opt }}</div>
             {% endfor %}
         </div>
         <div class="solution-box">
-            {% set ans_idx = item.data.correct_index %}
+            {% set current_item = item.data if item.data else item %}
+            {% set ans_idx = current_item.correct_index %}
             <div class="answer">उत्तर: ({{ labels[ans_idx] if ans_idx < 4 else ans_idx+1 }})</div>
-            {{ item.data.explanation }}
+            {{ current_item.explanation }}
         </div>
     </div>
     {% endfor %}
     </body></html>
     """
-    
     template = Template(html_template)
-    rendered_html = template.render(
-        title=title_text,
-        date_range=date_range_text,
-        total=len(data_list),
-        items=data_list,
-        font_path=font_path
-    )
-    
+    rendered_html = template.render(title=title_text, date_range=date_range_text, total=len(data_list), items=data_list, font_path=font_path)
     try:
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
     except: return None
 
 # ==========================================
-# 🚀 SENDING LOGIC (With Anti-Flood)
+# 🚀 SENDING LOGIC (FAST + ANTI-FLOOD)
 # ==========================================
 
 def safe_send_poll(target_chat, question, options, correct_index, explanation):
-    retry_count = 0
-    max_retries = 3
-    
-    while retry_count < max_retries:
-        try:
-            # Handle long questions
-            if len(question) > 250:
-                bot.send_message(target_chat, f"<b>Q.</b> {question}", parse_mode='HTML')
-                poll_question = "Q. ऊपर दिए गए प्रश्न का उत्तर दें:"
-            else:
-                poll_question = question
-
-            # Handle long explanations
-            if len(explanation) > 190:
-                poll_explanation = "Solution 👇 (Check Reply)"
-                send_exp_separately = True
-            else:
-                poll_explanation = explanation
-                send_exp_separately = False
-
-            # Send Poll
-            poll_msg = bot.send_poll(
-                chat_id=target_chat,
-                question=poll_question,
-                options=options,
-                type='quiz',
-                correct_option_id=correct_index,
-                explanation=poll_explanation,
-                is_anonymous=True
-            )
-
-            if send_exp_separately:
-                exp_text = f"💡 <b>Detailed Solution:</b>\n\n{explanation}"
-                bot.send_message(target_chat, exp_text, reply_to_message_id=poll_msg.message_id, parse_mode='HTML')
-                
-            return True # Success
-            
-        except ApiTelegramException as e:
-            if e.error_code == 429: # Flood Wait Limit
-                retry_after = int(e.result_json['parameters']['retry_after'])
-                print(f"⚠️ Flood limit! Sleeping for {retry_after}s...")
-                time.sleep(retry_after + 1)
-                retry_count += 1
-            else:
-                print(f"❌ Error: {e}")
-                return False
-        except Exception as e:
-            print(f"❌ Generic Error: {e}")
-            return False
-            
-    return False
+    try:
+        poll_q = question[:250]
+        poll_e = explanation[:190]
+        poll_msg = bot.send_poll(chat_id=target_chat, question=poll_q, options=options, type='quiz', 
+                                 correct_option_id=correct_index, explanation=poll_e, is_anonymous=True)
+        if len(explanation) > 190:
+            bot.send_message(target_chat, f"💡 <b>Detailed Solution:</b>\n\n{explanation}", 
+                             reply_to_message_id=poll_msg.message_id, parse_mode='HTML')
+        return True
+    except ApiTelegramException as e:
+        if e.error_code == 429:
+            time.sleep(int(e.result_json['parameters']['retry_after']) + 1)
+            return safe_send_poll(target_chat, question, options, correct_index, explanation)
+        return False
 
 def process_send(message, key):
-    role = get_role(message)
-    if not role: return bot.reply_to(message, "🔒 Login Required. Send Password.")
-    
-    # 9637 RESTRICTION
-    if role == 'limited' and key != 'holas':
-        return bot.reply_to(message, "🚫 <b>Access Denied!</b> You can only use /holas", parse_mode='HTML')
-        
     uid = message.from_user.id
-    if uid not in quiz_buffer: return bot.reply_to(message, "❌ No JSON data found.")
-
+    if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: 
+        return bot.reply_to(message, "❌ आपके पास भेजने के लिए कोई प्रश्न नहीं हैं। पहले प्रश्न भेजें।")
+    
     target = CHANNELS[key]['id']
-    name = CHANNELS[key]['name']
-    bot.reply_to(message, f"📤 Sending {len(quiz_buffer[uid])} Qs to <b>{name}</b>...", parse_mode='HTML')
-    
     data = quiz_buffer[uid]
+    bot.reply_to(message, f"🚀 Sending {len(data)} Qs to {CHANNELS[key]['name']}...")
     success = 0
-    
     for i, item in enumerate(data):
-        q = item.get('question', '')
-        opts = item.get('options', []) or item.get('option', [])
-        ans = item.get('correct_index', 0)
-        exp = item.get('explanation', '')
-        
-        if not q.strip().lower().startswith('q'): q_display = f"Q{i+1}. {q}"
-        else: q_display = q
-
-        if safe_send_poll(target, q_display, opts, ans, exp):
+        if safe_send_poll(target, f"Q{i+1}. {item['question']}", item['options'], item['correct_index'], item['explanation']):
             success += 1
-            # Smart delay: Small delay to prevent flood, handled by safe_send_poll if limit hit
-            time.sleep(0.5) 
-
+            time.sleep(0.1)
     if success > 0:
-        add_to_history(data, key)
-        update_stats(uid, key, success, 'success')
-        bot.reply_to(message, f"✅ Sent {success} to {name}.")
+        hist = load_json(DB_HISTORY)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for q in data: hist.append({'timestamp': ts, 'channel': key, 'data': q})
+        save_json(DB_HISTORY, hist)
+        bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न भेज दिए गए।")
 
 # ==========================================
-# 🎮 COMMANDS (UPDATED)
+# 🎮 COMMANDS & MENU
 # ==========================================
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    register_user(message.from_user) # New: Save User
     uid = message.from_user.id
+    users = load_json(DB_USERS)
+    users[str(uid)] = message.from_user.first_name
+    save_json(DB_USERS, users)
     
-    if message.chat.type != 'private':
-        return bot.reply_to(message, "✅ MockRise Bot Active.")
-
-    if uid in user_sessions: del user_sessions[uid]
+    if message.chat.type != 'private': return
     
-    msg = bot.send_message(
-        message.chat.id, 
-        "🔒 <b>Bot Locked</b>\n\nकृपया अपना पासवर्ड दर्ज करें:", 
-        parse_mode='HTML'
+    # By default, anyone who starts is a normal user
+    if uid not in user_sessions:
+        user_sessions[uid] = 'user'
+        
+    welcome_msg = (
+        f"👋 <b>नमस्ते {message.from_user.first_name}! MockRise Bot में आपका स्वागत है।</b>\n\n"
+        f"👤 <b>Current Mode:</b> User Panel\n"
+        f"आप मुझे प्रश्न (Text या JSON) भेज सकते हैं और उनका <b>PDF</b> बना सकते हैं।\n\n"
+        f"🔒 <b>Admin/Holas Access:</b> अगर आपके पास एक्सेस है, तो /password टाइप करें।\n"
+        f"ℹ️ <b>मदद:</b> क्या-क्या फीचर्स हैं जानने के लिए /help टाइप करें।"
     )
+    bot.send_message(message.chat.id, welcome_msg, parse_mode='HTML')
+
+@bot.message_handler(commands=['password'])
+def ask_password(message):
+    if message.chat.type != 'private': return
+    bot.reply_to(message, "🔑 <b>कृपया अपना पासवर्ड टाइप करके भेजें:</b>", parse_mode='HTML')
 
 @bot.message_handler(commands=['help'])
-def send_help(message):
-    if not check_access(message): return
+def cmd_help(m):
+    uid = m.from_user.id
+    role = user_sessions.get(uid, 'user')
+    q_count = len(quiz_buffer.get(uid, []))
     
-    role = get_role(message)
+    txt = f"🤖 <b>MockRise Pro Bot</b>\n"
+    txt += f"👤 <b>Status:</b> {role.upper()}\n"
+    txt += f"📝 <b>बनाए गए प्रश्न (Buffer):</b> {q_count}\n\n"
     
-    help_text = f"""
-🤖 <b>MockRise Pro Bot</b>
-🔑 Status: <b>{role.upper() if role else 'GUEST'}</b>
-
-📝 <b>Editing:</b>
-/edit - Edit Questions
-/list - View Questions
-
-📂 <b>PDF Tools:</b>
-/pdf_daily - Today's Quiz
-/pdf_weekly - Last 7 Days
-/pdf_custom - Custom Range
-
-📢 <b>Sending:</b>
-/holas - Send to Holas (UPSC Hindi) ✅
-"""
-    if role == 'admin':
-        help_text += """
-/mockrise - Send to Main Channel
-/rssb, /ssc, /upsc, /springboard, /kalam
-/bulk_send - Send to ALL Channels 🚀
-
-📊 <b>Admin Tools:</b>
-/stats - View User/Bot Analytics
-/broadcast - Send message to all users
-"""
-    
-    help_text += "\n🛑 <b>Control:</b>\n/stop - Clear Data\n/logout - Exit"
-    bot.reply_to(message, help_text, parse_mode='HTML')
-
-# --- New Admin Commands ---
+    if role == 'admin': 
+        txt += "👑 <b>Admin Panel:</b>\n"
+        txt += "चैनल पर भेजने के लिए:\n/mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard\n\n"
+        txt += "अन्य टूल:\n/edit, /pdf_daily, /stats, /broadcast"
+    elif role == 'limited':
+        txt += "🔹 <b>Holas Panel:</b>\n"
+        txt += "चैनल पर भेजने के लिए:\n/holas\n\n"
+        txt += "अन्य टूल:\n/edit, /pdf_daily"
+    else:
+        txt += "👤 <b>User Panel:</b>\n"
+        txt += "आप प्रश्न भेजकर केवल उनका PDF बना सकते हैं।\n"
+        txt += "/pdf_daily - आज का PDF जनरेट करें\n"
+        txt += "/edit - प्रश्नों को एडिट करें"
+        
+    bot.reply_to(m, txt, parse_mode='HTML')
 
 @bot.message_handler(commands=['stats'])
 def cmd_stats(m):
-    if not check_access(m, 'admin'): return
-    
+    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ Access Denied!")
     users = load_json(DB_USERS)
-    stats = load_json(DB_STATS)
-    total_users = len(users)
-    total_sent = sum(u.get('total_sent', 0) for u in stats.values())
-    
-    msg = f"""
-📊 <b>Bot Analytics</b>
-
-👥 <b>Total Users:</b> {total_users}
-📤 <b>Questions Sent:</b> {total_sent}
-📅 <b>Server Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}
-    """
-    bot.reply_to(m, msg, parse_mode='HTML')
+    bot.reply_to(m, f"📊 <b>Stats:</b>\nTotal Users: {len(users)}", parse_mode='HTML')
 
 @bot.message_handler(commands=['broadcast'])
-def cmd_broadcast(m):
-    if not check_access(m, 'admin'): return
-    
-    msg_text = m.text.replace('/broadcast', '').strip()
-    if not msg_text:
-        return bot.reply_to(m, "❌ Usage: /broadcast Your Message Here")
-    
+def cmd_bc(m):
+    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ Access Denied!")
+    text = m.text.replace('/broadcast', '').strip()
+    if not text: return
     users = load_json(DB_USERS)
-    count = 0
-    bot.reply_to(m, f"📢 Broadcasting to {len(users)} users...")
-    
-    for uid in users:
-        try:
-            bot.send_message(uid, f"📢 <b>Announcement:</b>\n\n{msg_text}", parse_mode='HTML')
-            count += 1
-            time.sleep(0.1) # Safe delay
-        except:
-            pass # Ignore blocked users
-            
-    bot.reply_to(m, f"✅ Broadcast sent to {count} users.")
+    for u in users:
+        try: bot.send_message(u, f"📢 <b>Announcement:</b>\n\n{text}", parse_mode='HTML')
+        except: pass
+    bot.reply_to(m, "✅ Broadcast Done.")
 
-# --- Sending Commands ---
-
-@bot.message_handler(commands=['mockrise'])
-def c_mr(m): process_send(m, 'mockrise')
+# --- Channel Sending Handlers (Protected) ---
+@bot.message_handler(commands=['mockrise', 'rssb', 'ssc', 'upsc', 'springboard', 'kalam'])
+def admin_ch_handle(m):
+    if user_sessions.get(m.from_user.id) != 'admin':
+        return bot.reply_to(m, "❌ <b>Access Denied!</b> यह कमांड केवल Admin के लिए है।", parse_mode='HTML')
+    process_send(m, m.text.replace('/', ''))
 
 @bot.message_handler(commands=['holas'])
-def c_holas(m): process_send(m, 'holas')
-
-@bot.message_handler(commands=['rssb'])
-def c_rssb(m): process_send(m, 'rssb')
-
-@bot.message_handler(commands=['ssc'])
-def c_ssc(m): process_send(m, 'ssc')
-
-@bot.message_handler(commands=['upsc'])
-def c_upsc(m): process_send(m, 'upsc')
-
-@bot.message_handler(commands=['springboard'])
-def c_sb(m): process_send(m, 'springboard')
-
-@bot.message_handler(commands=['kalam'])
-def c_kl(m): process_send(m, 'kalam')
-
-@bot.message_handler(commands=['bulk_send'])
-def c_bulk(m):
-    if not check_access(m, 'admin'): return
-    if m.from_user.id not in quiz_buffer: return bot.reply_to(m, "❌ No JSON.")
-    
-    for k in CHANNELS: 
-        process_send(m, k)
-        time.sleep(2)
-    bot.reply_to(m, "✅ Bulk Send Complete.")
-
-@bot.message_handler(commands=['stop'])
-def cmd_stop(m):
-    if not check_access(m): return
-    uid = m.from_user.id
-    if uid in quiz_buffer: del quiz_buffer[uid]
-    if uid in json_fragments: del json_fragments[uid]
-    bot.reply_to(m, "🛑 Buffers Cleared.")
-
-@bot.message_handler(commands=['logout'])
-def cmd_logout(m):
-    if m.from_user.id in user_sessions: del user_sessions[m.from_user.id]
-    bot.reply_to(m, "🔒 Logged Out.")
-
-# --- PDF Commands ---
+def holas_ch_handle(m):
+    role = user_sessions.get(m.from_user.id)
+    if role not in ['admin', 'limited']:
+        return bot.reply_to(m, "❌ <b>Access Denied!</b> यह कमांड केवल Holas/Admin के लिए है।", parse_mode='HTML')
+    process_send(m, m.text.replace('/', ''))
 
 @bot.message_handler(commands=['pdf_daily'])
-def cmd_pdf_daily(m):
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_disp = datetime.now().strftime("%d-%m-%Y")
-    hist = load_json(DB_HISTORY)
-    data = [h for h in hist if h['timestamp'].startswith(today)]
-    
-    if not data: return bot.reply_to(m, "❌ No data for today.")
-    
-    bot.reply_to(m, "⚙️ Generating PDF...")
-    fname = f"Daily_{datetime.now().strftime('%H%M%S')}.pdf"
-    res = generate_pdf_html(data, fname, "Daily Quiz", today_disp)
-    
+def cmd_pdf(m):
+    uid = m.from_user.id
+    # पहले बफर के प्रश्न चेक करेगा (यूज़र के लिए)
+    if uid in quiz_buffer and len(quiz_buffer[uid]) > 0:
+        data = quiz_buffer[uid]
+        bot.reply_to(m, f"📄 Generating PDF for {len(data)} questions in your buffer...")
+    else:
+        # अगर एडमिन है तो हिस्ट्री से बनाएगा
+        today = datetime.now().strftime("%Y-%m-%d")
+        hist = load_json(DB_HISTORY)
+        data = [h['data'] if 'data' in h else h for h in hist if h.get('timestamp', '').startswith(today)]
+        if not data: return bot.reply_to(m, "❌ आपके पास कोई डेटा नहीं है। पहले प्रश्न भेजें।")
+        bot.reply_to(m, "📄 Generating Daily History PDF...")
+        
+    res = generate_pdf_html(data, f"Quiz_PDF_{uid}.pdf", "MockRise Quiz PDF", "Latest")
     if res:
-        with open(res, 'rb') as f:
-            bot.send_document(m.chat.id, f, caption=f"📅 Daily Quiz: {today_disp}")
-        os.remove(res)
-
-@bot.message_handler(commands=['pdf_weekly'])
-def cmd_pdf_weekly(m):
-    end = datetime.now()
-    start = end - timedelta(days=7)
-    hist = load_json(DB_HISTORY)
-    data = [h for h in hist if start <= datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S") <= end]
-    label = f"{start.strftime('%d-%m-%Y')} to {end.strftime('%d-%m-%Y')}"
-    
-    fname = f"Weekly_{datetime.now().strftime('%H%M%S')}.pdf"
-    res = generate_pdf_html(data, fname, "Weekly Compilation", label)
-    if res:
-        with open(res, 'rb') as f: bot.send_document(m.chat.id, f, caption=f"📅 Weekly: {label}")
+        with open(res, 'rb') as f: bot.send_document(m.chat.id, f)
         os.remove(res)
 
 @bot.message_handler(commands=['edit'])
-def cmd_edit_start(m):
-    if not check_access(m): return
+def cmd_edit(m):
     uid = m.from_user.id
-    if uid not in quiz_buffer or not quiz_buffer[uid]:
-        return bot.reply_to(m, "❌ Buffer Empty.")
-    
-    msg = bot.reply_to(m, f"✏️ Send Question Number (1 - {len(quiz_buffer[uid])}):")
-    bot.register_next_step_handler(msg, step_edit_number)
+    if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: 
+        return bot.reply_to(m, "❌ आपके पास एडिट करने के लिए कोई प्रश्न नहीं है।")
+    msg = bot.reply_to(m, f"Q No (1 से {len(quiz_buffer[uid])} के बीच) बताएँ जिसे एडिट करना है:")
+    bot.register_next_step_handler(msg, step_edit_num)
 
-def step_edit_number(m):
-    if not check_access(m): return
-    uid = m.from_user.id
+def step_edit_num(m):
     try:
         idx = int(m.text) - 1
-        if 0 <= idx < len(quiz_buffer[uid]):
-            q_data = quiz_buffer[uid][idx]
-            q_str = json.dumps(q_data, indent=2, ensure_ascii=False)
-            msg = bot.reply_to(m, f"📝 <b>Edit:</b>\n<pre>{q_str}</pre>\n👇 <b>Send NEW JSON</b>:", parse_mode='HTML')
-            bot.register_next_step_handler(msg, step_edit_save, idx)
-        else: bot.reply_to(m, "❌ Invalid Number.")
-    except: bot.reply_to(m, "❌ Send a number.")
+        q = quiz_buffer[m.from_user.id][idx]
+        msg = bot.reply_to(m, f"Q{idx+1} के लिए नया JSON कोड भेजें:")
+        bot.register_next_step_handler(msg, step_edit_final, idx)
+    except: bot.reply_to(m, "❌ गलत नंबर।")
 
-def step_edit_save(m, idx):
-    if not check_access(m): return
-    uid = m.from_user.id
+def step_edit_final(m, idx):
     try:
-        clean_text = m.text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
-        quiz_buffer[uid][idx] = json.loads(clean_text)
-        bot.reply_to(m, "✅ Updated.")
-    except: bot.reply_to(m, "❌ Failed.")
+        quiz_buffer[m.from_user.id][idx] = json.loads(m.text)
+        bot.reply_to(m, "✅ प्रश्न सफलतापूर्वक अपडेट कर दिया गया।")
+    except: bot.reply_to(m, "❌ JSON फॉर्मेट गलत है, अपडेट फेल।")
 
 # ==========================================
-# 🧩 TEXT HANDLER (LOGIN & JSON)
+# 🧩 TEXT HANDLER (Main Logic Engine)
 # ==========================================
 
 @bot.message_handler(content_types=['text'])
 def handle_text(m):
-    # Groups: Ignore passwords, only listen to commands (handled above)
-    if m.chat.type in ['group', 'supergroup']: return
-
     uid = m.from_user.id
     text = m.text.strip()
     
-    # 1️⃣ PASSWORD CHECK
-    if text == PASS_ADMIN:
+    # Password Validation Check
+    if text == PASS_ADMIN: 
         user_sessions[uid] = 'admin'
-        register_user(m.from_user)
-        return bot.reply_to(m, "🔓 <b>Welcome ADMIN!</b>\nAccess: Full Control 🚀", parse_mode='HTML')
-    
-    elif text == PASS_LIMIT:
+        return bot.reply_to(m, "🔓 <b>Admin Panel Unlocked!</b>\nअब आप सभी चैनलों पर क्विज़ भेज सकते हैं। /help देखें।", parse_mode='HTML')
+    if text == PASS_LIMIT: 
         user_sessions[uid] = 'limited'
-        register_user(m.from_user)
-        return bot.reply_to(m, "🔓 <b>Welcome User!</b>\nAccess: /holas & PDF Only.", parse_mode='HTML')
+        return bot.reply_to(m, "🔓 <b>Holas Panel Unlocked!</b>\nअब आप Holas चैनल पर क्विज़ भेज सकते हैं। /help देखें।", parse_mode='HTML')
     
+    # Default assign user role if not exist
     if uid not in user_sessions:
-        return bot.reply_to(m, "🔒 <b>Locked.</b> Enter password.", parse_mode='HTML')
+        user_sessions[uid] = 'user'
+        
+    role = user_sessions[uid]
 
-    # 2️⃣ JSON ACCUMULATOR
+    # JSON or Text Parsing Logic
     if text.startswith('['):
         json_fragments[uid] = text
     elif uid in json_fragments:
         json_fragments[uid] += text
+        if json_fragments[uid].endswith(']'):
+            try:
+                quiz_buffer[uid] = json.loads(json_fragments[uid])
+                del json_fragments[uid]
+            except: 
+                return bot.reply_to(m, "❌ JSON Parsing Error! कृपया सही फॉर्मेट भेजें।")
     else:
-        if not text.startswith('/'): return
+        parsed = text_to_json_parser(text)
+        if parsed: quiz_buffer[uid] = parsed
 
-    # 3️⃣ PROCESS JSON
-    if uid in json_fragments and json_fragments[uid].endswith(']'):
-        try:
-            clean_text = json_fragments[uid].replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
-            clean_text = re.sub(r'^```json\s*|\s*```$', '', clean_text, flags=re.MULTILINE)
+    # Response Builder based on Quiz Count and Role
+    if uid in quiz_buffer and not text.startswith('/'):
+        q_count = len(quiz_buffer[uid])
+        msg = f"✅ <b>डेटा प्राप्त हुआ ({q_count} प्रश्न तैयार हैं)</b>\n\n"
+        msg += f"✏️ /edit - प्रश्नों में सुधार करें\n"
+        msg += f"📄 /pdf_daily - इन प्रश्नों का PDF बनाएँ\n\n"
+        
+        if role == 'admin':
+            msg += "👇 <b>चैनल पर भेजने के लिए क्लिक करें:</b>\n/mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard"
+        elif role == 'limited':
+            msg += "👇 <b>चैनल पर भेजने के लिए क्लिक करें:</b>\n/holas"
+        else:
+            msg += "🔒 <i>नोट: क्विज़ को चैनल पर पब्लिश करने के लिए आपके पास Admin या Holas एक्सेस होना चाहिए (/password)।</i>"
             
-            data = json.loads(clean_text)
-            quiz_buffer[uid] = data
-            del json_fragments[uid]
-            
-            role = user_sessions[uid]
-            if role == 'admin':
-                opts = "/mockrise, /rssb, /ssc, /upsc, /holas\n🚀 /bulk_send"
-            else:
-                opts = "/holas (Only)"
-            
-            msg = (f"✅ <b>JSON Received ({len(data)} Qs)</b>\n\n"
-                   f"✏️ /edit\n"
-                   f"👇 <b>Send:</b> {opts}\n"
-                   f"📄 /pdf_daily")
-            bot.reply_to(m, msg, parse_mode='HTML')
-            
-        except json.JSONDecodeError:
-            bot.reply_to(m, "❌ Invalid JSON. /stop to clear.")
-        except Exception as e:
-            bot.reply_to(m, f"❌ Invalid: {e}")
-            del json_fragments[uid]
+        bot.reply_to(m, msg, parse_mode='HTML')
 
 if __name__ == "__main__":
     keep_alive()
