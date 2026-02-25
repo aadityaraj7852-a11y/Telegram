@@ -29,7 +29,7 @@ CHANNELS = {
     'rssb': {'id': '@ldc_reet_ras_2ndgrade_kalam', 'name': 'RSSB/LDC/REET'},
     'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Springboard'},
     'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'},
-    'holas': {'id': '@@LDCTOPPERS2026', 'name': 'LDC Toppers 2026'}
+    'holas': {'id': '@botdemoquiz', 'name': 'LDC Toppers 2026'}
 }
 
 # Files
