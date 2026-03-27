@@ -19,17 +19,26 @@ MAIN_CHANNEL_ID = "@mockrise"
 
 # 🔐 PASSWORDS
 PASS_ADMIN = "7852"   # Full Access
-PASS_LIMIT = "9637"   # Only Holas + PDF
 
-# ✅ Channels List
+# 🎨 BRANDS & LOGOS CONFIGURATION
+BRANDS = {
+    'mockrise': {
+        'website': 'www.mockrise.com',
+        'logo': 'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg'
+    },
+    'cpsir': {
+        'website': 'https://www.gurudeepaiacademy.com/',
+        # Telegram link is not an image file. Replace the URL below with your actual .jpg/.png direct logo link.
+        'logo': 'https://blogger.googleusercontent.com/img/a/AVvXsEgUuZDpANHyMD9YoC5ftPljTkNKbJ5rFJJkdV2S5sDWjD-bj19PPDnexZ-0deX07JvtXLp5OtI_dMtBeH9EE6b7PUkJ8eV94I5k8Q_H7TPkNm7WRRiYfQLo4p6mMl-hnqbVQ3IytxmtLx-vxAOgOo6jwbI0wiWnBaY-XeTERgK9id1NCrPDbfj1smHvfm0=s640'
+    }
+}
+
+# ✅ Channels List (Updated as per your request)
 CHANNELS = {
-    'mockrise': {'id': '@mockrise', 'name': 'MockRise Main'},
-    'upsc': {'id': '@upsc_ssc_cgl_mts_cgl_chsl_gk', 'name': 'UPSC/IAS'},
-    'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS'},
-    'rssb': {'id': '@ldc_reet_ras_2ndgrade_kalam', 'name': 'RSSB/LDC/REET'},
-    'springboard': {'id': '@rssb_gk_rpsc_springboar', 'name': 'Springboard'},
-    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy'},
-    'holas': {'id': '@botdemoquiz', 'name': 'LDC Toppers 2026'}
+    'mockrise': {'id': '@mockrise', 'name': 'MockRise Main', 'brand': 'mockrise'},
+    'cpsir': {'id': '@GuruDeepClasses', 'name': 'GuruDeep Classes', 'brand': 'cpsir'},
+    'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS', 'brand': 'mockrise'},
+    'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy', 'brand': 'mockrise'}
 }
 
 # Files
@@ -53,7 +62,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ Bot is Running (Channel-Specific PDF Routing Active)!"
+    return "✅ Bot is Running (Mockrise & CP Sir Multi-Channel Edition)!"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -92,9 +101,11 @@ def check_font():
         except: pass
     return os.path.abspath(FONT_FILE)
 
-def generate_pdf_html(data_list, filename, title_text, date_range_text):
+def generate_pdf_html(data_list, filename, title_text, date_range_text, brand_key='mockrise'):
     if not data_list: return None
     font_path = check_font()
+    brand_info = BRANDS.get(brand_key, BRANDS['mockrise'])
+    
     html_template = """
     <!DOCTYPE html>
     <html lang="hi">
@@ -121,8 +132,8 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
     </head>
     <body>
     <div class="header">
-        <div class="logo"><img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg"></div>
-        <div class="title"><h1>{{ title }}</h1><p>www.mockrise.com</p></div><div style="width:70px;"></div>
+        <div class="logo"><img src="{{ brand_logo }}"></div>
+        <div class="title"><h1>{{ title }}</h1><p>{{ brand_website }}</p></div><div style="width:70px;"></div>
     </div>
     <div class="meta"><div>Date: {{ date_range }}</div><div>Total Questions: {{ total }}</div></div>
     <div class="top-line"></div>
@@ -148,15 +159,25 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text):
     </body></html>
     """
     template = Template(html_template)
-    rendered_html = template.render(title=title_text, date_range=date_range_text, total=len(data_list), items=data_list, font_path=font_path)
+    rendered_html = template.render(
+        title=title_text, 
+        date_range=date_range_text, 
+        total=len(data_list), 
+        items=data_list, 
+        font_path=font_path,
+        brand_logo=brand_info['logo'],
+        brand_website=brand_info['website']
+    )
     try:
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
     except: return None
 
-def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text):
+def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text, brand_key='mockrise'):
     if not data_list: return None
     font_path = check_font()
+    brand_info = BRANDS.get(brand_key, BRANDS['mockrise'])
+    
     html_template = """
     <!DOCTYPE html>
     <html lang="hi">
@@ -180,8 +201,8 @@ def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text)
     </head>
     <body>
     <div class="header">
-        <div class="logo"><img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg"></div>
-        <div class="title"><h1>{{ title }}</h1><p>www.mockrise.com</p></div><div style="width:70px;"></div>
+        <div class="logo"><img src="{{ brand_logo }}"></div>
+        <div class="title"><h1>{{ title }}</h1><p>{{ brand_website }}</p></div><div style="width:70px;"></div>
     </div>
     <div class="meta"><div>Date: {{ date_range }}</div><div>Total One-Liners: {{ total }}</div></div>
     <div class="top-line"></div>
@@ -195,7 +216,15 @@ def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text)
     </body></html>
     """
     template = Template(html_template)
-    rendered_html = template.render(title=title_text, date_range=date_range_text, total=len(data_list), items=data_list, font_path=font_path)
+    rendered_html = template.render(
+        title=title_text, 
+        date_range=date_range_text, 
+        total=len(data_list), 
+        items=data_list, 
+        font_path=font_path,
+        brand_logo=brand_info['logo'],
+        brand_website=brand_info['website']
+    )
     try:
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
@@ -250,49 +279,57 @@ def safe_send_message(target_chat, text):
             return safe_send_message(target_chat, text)
         return False
 
-def process_send(message, key):
+def process_send(message, keys):
+    """Sends JSON buffer to one or multiple channels"""
     if message.chat.type != 'private': return
     
     uid = message.from_user.id
     if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: 
         return bot.reply_to(message, "❌ आपके पास भेजने के लिए कोई प्रश्न नहीं हैं। पहले JSON भेजें।")
     
-    target = CHANNELS[key]['id']
     data = quiz_buffer[uid]
-    bot.reply_to(message, f"🚀 Sending {len(data)} items to {CHANNELS[key]['name']}... कृपया प्रतीक्षा करें।")
     
-    success = 0
-    one_liners_batch = []
-    
-    for i, item in enumerate(data):
-        if 'options' in item:
-            if safe_send_poll(target, f"Q{i+1}. {item['question']}", item['options'], item.get('correct_index', 0), item.get('explanation', 'MockRise')):
+    for key in keys:
+        if key not in CHANNELS: continue
+        target = CHANNELS[key]['id']
+        bot.reply_to(message, f"🚀 Sending {len(data)} items to {CHANNELS[key]['name']}... कृपया प्रतीक्षा करें।")
+        
+        success = 0
+        one_liners_batch = []
+        
+        for item in data:
+            if 'options' in item:
+                # Question Number (Q1., Q2.) is removed for channel send
+                if safe_send_poll(target, item['question'], item['options'], item.get('correct_index', 0), item.get('explanation', 'MockRise')):
+                    success += 1
+                time.sleep(0.3)
+            elif 'answer' in item:
+                # Question Number is removed for One-Liner channel send too
+                one_liners_batch.append(f"🔹 <b>{item['question']}</b>\n👉 <b>उत्तर:</b> {item['answer']}\n")
                 success += 1
-            time.sleep(0.3)
-        elif 'answer' in item:
-            one_liners_batch.append(f"🔹 <b>Q{i+1}. {item['question']}</b>\n👉 <b>उत्तर:</b> {item['answer']}\n")
-            success += 1
-            
-    if one_liners_batch:
-        current_msg = "📝 <b>महत्वपूर्ण वन-लाइनर प्रश्न:</b>\n\n"
-        for ol in one_liners_batch:
-            if len(current_msg) + len(ol) > 4000: 
+                
+        if one_liners_batch:
+            current_msg = "📝 <b>महत्वपूर्ण वन-लाइनर प्रश्न:</b>\n\n"
+            for ol in one_liners_batch:
+                if len(current_msg) + len(ol) > 4000: 
+                    safe_send_message(target, current_msg)
+                    time.sleep(2)
+                    current_msg = "📝 <b>वन-लाइनर (Cont..):</b>\n\n"
+                current_msg += ol + "\n"
+            if current_msg.strip():
                 safe_send_message(target, current_msg)
-                time.sleep(2)
-                current_msg = "📝 <b>वन-लाइनर (Cont..):</b>\n\n"
-            current_msg += ol + "\n"
-        if current_msg.strip():
-            safe_send_message(target, current_msg)
-        
-    if success > 0:
-        hist = load_json(DB_HISTORY)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for q in data: hist.append({'timestamp': ts, 'channel': key, 'data': q})
-        save_json(DB_HISTORY, hist)
-        
-        # CLEAR BUFFER AFTER SUCCESSFUL SEND
-        del quiz_buffer[uid]
-        bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न चैनल पर भेज दिए गए हैं! (मेमोरी क्लियर कर दी गई है)")
+            
+        if success > 0:
+            hist = load_json(DB_HISTORY)
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for q in data: hist.append({'timestamp': ts, 'channel': key, 'data': q})
+            save_json(DB_HISTORY, hist)
+            
+            bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न {CHANNELS[key]['name']} पर भेज दिए गए हैं!")
+            
+    # CLEAR BUFFER AFTER SUCCESSFUL SEND TO ALL REQUESTED CHANNELS
+    del quiz_buffer[uid]
+    bot.reply_to(message, "✅ प्रक्रिया पूरी हुई। मेमोरी क्लियर कर दी गई है।")
 
 # ==========================================
 # 🕒 CHANNEL-SPECIFIC PDF BROADCAST LOGIC
@@ -317,23 +354,23 @@ def get_history_grouped_by_channel(days=1):
         except: pass
     return grouped
 
-def send_channel_pdfs(days=1, prefix="Daily", user_id=None, role='admin'):
+def send_channel_pdfs(days=1, prefix="Daily", user_id=None):
     grouped = get_history_grouped_by_channel(days)
     date_str = datetime.now().strftime("%d-%m-%Y")
     sent_any = False
     
     for ch_key, data in grouped.items():
-        if role == 'limited' and ch_key != 'holas': continue
-        
         mcq_data = data['mcq']
         oneliner_data = data['oneliner']
         target_chat = CHANNELS[ch_key]['id']
+        brand_key = CHANNELS[ch_key]['brand']
+        brand_name = "CP Sir" if brand_key == "cpsir" else "MockRise"
         
         if mcq_data:
             pdf_name = f"{prefix}_MCQ_{ch_key}_{date_str}.pdf"
-            res = generate_pdf_html(mcq_data, pdf_name, f"MockRise {prefix} MCQ - {CHANNELS[ch_key]['name']}", date_str)
+            res = generate_pdf_html(mcq_data, pdf_name, f"{brand_name} {prefix} MCQ - {CHANNELS[ch_key]['name']}", date_str, brand_key)
             if res:
-                caption = f"📄 {prefix} Quiz\n📅 Date: {date_str}\n🔢 Questions: {len(mcq_data)}\nBy: @MockRise"
+                caption = f"📄 {prefix} Quiz\n📅 Date: {date_str}\n🔢 Questions: {len(mcq_data)}\nBy: {brand_name}"
                 try:
                     with open(res, 'rb') as f:
                         bot.send_document(target_chat, f, caption=caption)
@@ -346,9 +383,9 @@ def send_channel_pdfs(days=1, prefix="Daily", user_id=None, role='admin'):
         
         if oneliner_data:
             pdf_name = f"{prefix}_OneLiner_{ch_key}_{date_str}.pdf"
-            res = generate_oneliner_pdf_html(oneliner_data, pdf_name, f"MockRise {prefix} One-Liners - {CHANNELS[ch_key]['name']}", date_str)
+            res = generate_oneliner_pdf_html(oneliner_data, pdf_name, f"{brand_name} {prefix} One-Liners - {CHANNELS[ch_key]['name']}", date_str, brand_key)
             if res:
-                caption = f"📄 {prefix} One-Liner\n📅 Date: {date_str}\n🔢 Questions: {len(oneliner_data)}\nBy: @MockRise"
+                caption = f"📄 {prefix} One-Liner\n📅 Date: {date_str}\n🔢 Questions: {len(oneliner_data)}\nBy: {brand_name}"
                 try:
                     with open(res, 'rb') as f:
                         bot.send_document(target_chat, f, caption=caption)
@@ -389,7 +426,7 @@ def send_welcome(message):
     if uid in json_fragments: del json_fragments[uid]
         
     welcome_msg = (
-        f"👋 <b>नमस्ते {message.from_user.first_name}! MockRise Bot में आपका स्वागत है।</b>\n\n"
+        f"👋 <b>नमस्ते {message.from_user.first_name}! Bot में आपका स्वागत है।</b>\n\n"
         f"🚨 <b>नोट:</b> केवल <b>JSON कोड</b> स्वीकार्य है।\n"
         f"🔒 <b>Admin Access:</b> /password\n"
         f"ℹ️ <b>मदद:</b> /help\n"
@@ -418,13 +455,13 @@ def cmd_help(m):
     uid = m.from_user.id
     role = user_sessions.get(uid, 'user')
     q_count = len(quiz_buffer.get(uid, []))
-    txt = f"🤖 <b>MockRise Pro Bot</b>\n👤 <b>Status:</b> {role.upper()}\n📝 <b>बनाए गए प्रश्न:</b> {q_count}\n\n"
+    txt = f"🤖 <b>Bot Panel</b>\n👤 <b>Status:</b> {role.upper()}\n📝 <b>बनाए गए प्रश्न:</b> {q_count}\n\n"
     if role == 'admin': 
-        txt += "👑 <b>Admin Panel:</b>\nचैनल: /mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard\n"
+        txt += "👑 <b>Admin Panel:</b>\n"
+        txt += "➡️ एक चैनल पर भेजें: /mockrise, /cpsir, /ssc, /kalam\n"
+        txt += "🚀 <b>सब पर एक साथ भेजें:</b> /send_all\n\n"
         txt += "<b>Auto PDFs (Send to Channels & DM):</b>\n/pdf_daily - आज का PDF सब जगह भेजें\n/pdf_weekly - हफ्ते का PDF सब जगह भेजें\n"
         txt += "टूल्स: /edit, /stats, /broadcast, /cancel"
-    elif role == 'limited':
-        txt += "🔹 <b>Holas Panel:</b>\nचैनल: /holas\nटूल्स: /edit, /pdf_daily, /cancel"
     else:
         txt += "👤 <b>User Panel:</b>\n/pdf_daily - Private PDF\n/edit - एडिट\n/cancel - JSON साफ़ करें"
     bot.reply_to(m, txt, parse_mode='HTML')
@@ -443,27 +480,28 @@ def admin_tools(m):
                 except: pass
             bot.reply_to(m, "✅ Broadcast Done.")
 
-@bot.message_handler(commands=['mockrise', 'rssb', 'ssc', 'upsc', 'springboard', 'kalam'])
+@bot.message_handler(commands=['mockrise', 'cpsir', 'ssc', 'kalam'])
 def admin_ch_handle(m):
     if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
-    process_send(m, m.text.replace('/', ''))
+    key = m.text.replace('/', '')
+    process_send(m, [key])
 
-@bot.message_handler(commands=['holas'])
-def holas_ch_handle(m):
+@bot.message_handler(commands=['send_all'])
+def admin_send_all_handle(m):
     if m.chat.type != 'private': return
-    if user_sessions.get(m.from_user.id) not in ['admin', 'limited']: return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
-    process_send(m, m.text.replace('/', ''))
+    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
+    # Sends to all 4 defined channels at once
+    process_send(m, list(CHANNELS.keys()))
 
-# NEW SMART PDF DISPATCHER
-@bot.message_handler(commands=['pdf_daily', 'pdf_oneliner', 'send_daily_all', 'pdf_weekly', 'send_weekly_all'])
+@bot.message_handler(commands=['pdf_daily', 'pdf_oneliner', 'pdf_weekly'])
 def cmd_pdf_smart(m):
     if m.chat.type != 'private': return
     uid = m.from_user.id
     role = user_sessions.get(uid, 'user')
     cmd = m.text.replace('/', '')
     
-    # 1. Private Buffer Check (For Users or Admins who just loaded JSON but didn't send to channel)
+    # 1. Private Buffer Check 
     if uid in quiz_buffer and len(quiz_buffer[uid]) > 0:
         data = quiz_buffer[uid]
         is_oneliner = 'answer' in data[0]
@@ -477,7 +515,7 @@ def cmd_pdf_smart(m):
         return
 
     # 2. History Check (Channel Dispatch)
-    if role not in ['admin', 'limited']:
+    if role != 'admin':
         return bot.reply_to(m, "❌ आपके पास कोई डेटा नहीं है। पहले JSON भेजें।")
     
     days = 7 if 'weekly' in cmd else 1
@@ -485,7 +523,7 @@ def cmd_pdf_smart(m):
     
     bot.reply_to(m, f"🚀 History चेक की जा रही है... सभी चैनल-वाइज PDF बनाकर डिस्पेच किए जा रहे हैं...")
     
-    success = send_channel_pdfs(days, prefix, user_id=uid, role=role)
+    success = send_channel_pdfs(days, prefix, user_id=uid)
     if not success:
         bot.reply_to(m, "❌ आज के लिए इतिहास (History) में कोई प्रश्न मौजूद नहीं हैं।")
 
@@ -527,9 +565,6 @@ def handle_text(m):
     if text == PASS_ADMIN: 
         user_sessions[uid] = 'admin'
         return bot.reply_to(m, "🔓 <b>Admin Panel Unlocked!</b>", parse_mode='HTML')
-    if text == PASS_LIMIT: 
-        user_sessions[uid] = 'limited'
-        return bot.reply_to(m, "🔓 <b>Holas Panel Unlocked!</b>", parse_mode='HTML')
     
     if uid not in user_sessions: user_sessions[uid] = 'user'
     role = user_sessions[uid]
@@ -559,9 +594,8 @@ def handle_text(m):
         msg += f"📄 /pdf_daily - (Private) PDF बनाएँ\n\n"
         
         if role == 'admin':
-            msg += "👇 <b>चैनल पर भेजें:</b>\n/mockrise, /rssb, /ssc, /upsc, /holas, /kalam, /springboard"
-        elif role == 'limited':
-            msg += "👇 <b>चैनल पर भेजें:</b>\n/holas"
+            msg += "👇 <b>चैनल पर भेजें:</b>\n/mockrise, /cpsir, /ssc, /kalam\n"
+            msg += "🚀 <b>सब पर एक साथ भेजें:</b> /send_all"
             
         bot.reply_to(m, msg, parse_mode='HTML')
 
