@@ -24,16 +24,16 @@ PASS_ADMIN = "7852"   # Full Access
 BRANDS = {
     'mockrise': {
         'website': 'www.mockrise.com',
-        'logo': 'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjm8_FXoAwwGHMEMe-XjUwLHyZtqfl-2QCBeve69L-k-DTJ2nbWaMJ56HJYvnIC0He2tHMWVo91xwJUkTcW9B-PmDTbVBUR0WxHLF0IFZebbgQw5RT2foPwzVEVnwKOeospWPq0LokG_Xy3muy6T1I1bQ_gJp-fsP5u1abLM0qhu1kP66yxXqffeclp-90/s640/1000002374.jpg'
+        # Naya Logo URL lagaya gaya hai
+        'logo': 'https://blogger.googleusercontent.com/img/a/AVvXsEhbqzX1vYBTW0G90MZo4vC6D06Sn0hXnN57XtwWxAkijUI5Rddzs5F7CV5PsBD4mJIf06tM97CjnV0Q8KDNlIjM4tJ7o32XmhJNR8vDTltIcmdwlnLTOhicbRuJ3mDq4p-NTCLYTuCwtmffepkOdPE8k7ywaYRqzGdaE12iILrnTNJC15x1Iuzb7Tewkw4=s1146'
     },
     'cpsir': {
         'website': 'https://www.gurudeepaiacademy.com/',
-        # Telegram link is not an image file. Replace the URL below with your actual .jpg/.png direct logo link.
         'logo': 'https://blogger.googleusercontent.com/img/a/AVvXsEgUuZDpANHyMD9YoC5ftPljTkNKbJ5rFJJkdV2S5sDWjD-bj19PPDnexZ-0deX07JvtXLp5OtI_dMtBeH9EE6b7PUkJ8eV94I5k8Q_H7TPkNm7WRRiYfQLo4p6mMl-hnqbVQ3IytxmtLx-vxAOgOo6jwbI0wiWnBaY-XeTERgK9id1NCrPDbfj1smHvfm0=s640'
     }
 }
 
-# ✅ Channels List (Updated as per your request)
+# ✅ Channels List
 CHANNELS = {
     'mockrise': {'id': '@mockrise', 'name': 'MockRise Main', 'brand': 'mockrise'},
     'cpsir': {'id': '@GuruDeepClasses', 'name': 'GuruDeep Classes', 'brand': 'cpsir'},
@@ -299,12 +299,10 @@ def process_send(message, keys):
         
         for item in data:
             if 'options' in item:
-                # Question Number (Q1., Q2.) is removed for channel send
                 if safe_send_poll(target, item['question'], item['options'], item.get('correct_index', 0), item.get('explanation', 'MockRise')):
                     success += 1
                 time.sleep(0.3)
             elif 'answer' in item:
-                # Question Number is removed for One-Liner channel send too
                 one_liners_batch.append(f"🔹 <b>{item['question']}</b>\n👉 <b>उत्तर:</b> {item['answer']}\n")
                 success += 1
                 
@@ -327,7 +325,6 @@ def process_send(message, keys):
             
             bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न {CHANNELS[key]['name']} पर भेज दिए गए हैं!")
             
-    # CLEAR BUFFER AFTER SUCCESSFUL SEND TO ALL REQUESTED CHANNELS
     del quiz_buffer[uid]
     bot.reply_to(message, "✅ प्रक्रिया पूरी हुई। मेमोरी क्लियर कर दी गई है।")
 
@@ -401,13 +398,9 @@ def send_channel_pdfs(days=1, prefix="Daily", user_id=None):
 def auto_scheduler_thread():
     while True:
         try:
-            now = datetime.now()
-            if now.hour == 21 and now.minute == 0:
-                send_channel_pdfs(days=1, prefix="Daily")
-                time.sleep(60)
-            if now.weekday() == 6 and now.hour == 10 and now.minute == 0:
-                send_channel_pdfs(days=7, prefix="Weekly")
-                time.sleep(60)
+            # Automatic background daily/weekly dispatch is disabled as per user instruction.
+            # Bot now retains memory, PDFs will only be sent when explicit manual commands are triggered.
+            pass
         except: pass
         time.sleep(30)
 
@@ -460,7 +453,8 @@ def cmd_help(m):
         txt += "👑 <b>Admin Panel:</b>\n"
         txt += "➡️ एक चैनल पर भेजें: /mockrise, /cpsir, /ssc, /kalam\n"
         txt += "🚀 <b>सब पर एक साथ भेजें:</b> /send_all\n\n"
-        txt += "<b>Auto PDFs (Send to Channels & DM):</b>\n/pdf_daily - आज का PDF सब जगह भेजें\n/pdf_weekly - हफ्ते का PDF सब जगह भेजें\n"
+        txt += "📝 <b>HTML नोट्स भेजें:</b> /send_notes\n\n"
+        txt += "<b>Manual PDFs Broadcast (Jab aap bolenge tabhi jayega):</b>\n/pdf_daily - Aaj ka PDF sabhi jagah bhejen\n/pdf_weekly - Hafte ka PDF sabhi jagah bhejen\n"
         txt += "टूल्स: /edit, /stats, /broadcast, /cancel"
     else:
         txt += "👤 <b>User Panel:</b>\n/pdf_daily - Private PDF\n/edit - एडिट\n/cancel - JSON साफ़ करें"
@@ -491,7 +485,6 @@ def admin_ch_handle(m):
 def admin_send_all_handle(m):
     if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
-    # Sends to all 4 defined channels at once
     process_send(m, list(CHANNELS.keys()))
 
 @bot.message_handler(commands=['pdf_daily', 'pdf_oneliner', 'pdf_weekly'])
@@ -525,7 +518,7 @@ def cmd_pdf_smart(m):
     
     success = send_channel_pdfs(days, prefix, user_id=uid)
     if not success:
-        bot.reply_to(m, "❌ आज के लिए इतिहास (History) में कोई प्रश्न मौजूद नहीं हैं।")
+        bot.reply_to(m, "❌ इतिहास (History) में कोई प्रश्न मौजूद नहीं हैं।")
 
 @bot.message_handler(commands=['edit'])
 def cmd_edit(m):
@@ -550,6 +543,59 @@ def step_edit_final(m, idx):
         quiz_buffer[m.from_user.id][idx] = json.loads(m.text)
         bot.reply_to(m, "✅ प्रश्न सफलतापूर्वक अपडेट कर दिया गया।")
     except: bot.reply_to(m, "❌ JSON फॉर्मेट गलत है, अपडेट फेल।")
+
+# ==========================================
+# 📝 NEW: HTML NOTES BROADCAST FEATURE
+# ==========================================
+
+@bot.message_handler(commands=['send_notes'])
+def cmd_send_notes(m):
+    if m.chat.type != 'private': return
+    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
+    
+    msg = bot.reply_to(m, "📝 <b>कृपया अपना HTML नोट्स या संदेश भेजें:</b>\n\n"
+                           "आप एक सामान्य संदेश या कोई <b>Image/Photo</b> भी भेज सकते हैं जिसके कैप्शन (Caption) में HTML कोड हो।\n\n"
+                           "👉 <b>सपोर्टेड फॉर्मेट्स:</b>\n"
+                           "• <code>&lt;b&gt;Bold Text&lt;/b&gt;</code>\n"
+                           "• <code>&lt;u&gt;Underline&lt;/u&gt;</code>\n"
+                           "• <code>&lt;tg-spoiler&gt;Spoiler&lt;/tg-spoiler&gt;</code>\n"
+                           "• <code>&lt;a href='https://link.com'&gt;Text Link&lt;/a&gt;</code>\n"
+                           "• बुलेट पॉइंट्स ( • ) या <h1>", parse_mode='HTML')
+    bot.register_next_step_handler(msg, process_html_notes)
+
+def process_html_notes(m):
+    if m.chat.type != 'private': return
+    uid = m.from_user.id
+    if user_sessions.get(uid) != 'admin': return
+    
+    # Text message ya Photo caption dono me se data extract karein
+    notes_content = m.text if m.text else m.caption
+    if not notes_content:
+        return bot.reply_to(m, "❌ कोई टेक्स्ट संदेश या कैप्शन प्राप्त नहीं हुआ। कृपया दोबारा /send_notes कमांड दें।")
+    
+    # Preprocess HTML (Telegram standard HTML me H1 support nahi karta, isliye bold me change karein taaki API crash na ho)
+    notes_content = notes_content.replace('<h1>', '<b>').replace('</h1>', '</b>')
+    notes_content = notes_content.replace('<h2>', '<b>').replace('</h2>', '</b>')
+    notes_content = notes_content.replace('<h3>', '<b>').replace('</h3>', '</b>')
+    
+    bot.reply_to(m, "🚀 आपके HTML नोट्स सभी चैनल्स पर भेजे जा रहे हैं... कृपया प्रतीक्षा करें।")
+    
+    success_count = 0
+    for key, ch_info in CHANNELS.items():
+        target = ch_info['id']
+        try:
+            if m.content_type == 'photo':
+                # Agar photo bhej rahe hain to photo with HTML caption bheje
+                bot.send_photo(target, m.photo[-1].file_id, caption=notes_content, parse_mode='HTML')
+            else:
+                # Agar sirf text message hai
+                bot.send_message(target, notes_content, parse_mode='HTML')
+            success_count += 1
+            time.sleep(0.5)
+        except Exception as e:
+            bot.send_message(m.chat.id, f"❌ <b>{ch_info['name']}</b> par bhejne me error: {str(e)}", parse_mode='HTML')
+            
+    bot.reply_to(m, f"✅ सफलता पूर्वक {success_count} चैनल्स पर आपके नोट्स पब्लिश कर दिए गए हैं।")
 
 # ==========================================
 # 🧩 ROBUST FRAGMENTED JSON HANDLER
@@ -582,7 +628,7 @@ def handle_text(m):
             return bot.reply_to(m, f"⏳ <b>JSON का हिस्सा प्राप्त हुआ...</b>\n(लंबाई: {len(json_fragments[uid])})\n\nबाकी का हिस्सा भेजें।\n/cancel दबाएं यदि अटक जाए।", parse_mode='HTML')
         except Exception as e:
             del json_fragments[uid]
-            return bot.reply_to(m, f"❌ Error: {str(e)}\n\n/cancel करें और दोबारा भेजें।")
+            return bot.reply_to(m, f"❌ Error: {str(e)}\n\n/cancel करें and दोबारा भेजें।")
     else:
         if not text.startswith('/'):
             return bot.reply_to(m, "❌ <b>कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।</b>", parse_mode='HTML')
@@ -591,7 +637,7 @@ def handle_text(m):
         q_count = len(quiz_buffer[uid])
         msg = f"✅ <b>डेटा प्राप्त हुआ ({q_count} प्रश्न तैयार हैं)</b>\n\n"
         msg += f"✏️ /edit - प्रश्नों में सुधार करें\n"
-        msg += f"📄 /pdf_daily - (Private) PDF बनाएँ\n\n"
+        msg += f"📄 /pdf_daily - (Private) PDF बनाएं\n\n"
         
         if role == 'admin':
             msg += "👇 <b>चैनल पर भेजें:</b>\n/mockrise, /cpsir, /ssc, /kalam\n"
