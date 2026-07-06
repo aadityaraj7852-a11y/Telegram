@@ -14,7 +14,7 @@ from telebot.apihelper import ApiTelegramException
 # ⚙️ CONFIGURATION
 # ==========================================
 
-BOT_TOKEN = "7654075050:AAFN1J1-SxpjrOAEkLLup16eTvMVQlgoU8E"
+BOT_TOKEN = "7654075050:AAHJWBsY_gzqpOi_kcpWOZoGl2eFHrSvr9c"
 MAIN_CHANNEL_ID = "@mockrise"
 
 # 🔐 PASSWORDS
@@ -54,7 +54,7 @@ user_sessions = {}
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# 🌐 FLASK SERVER
+# 🌐 FLASK SERVER (Keep Alive)
 # ==========================================
 
 app = Flask('')
@@ -87,10 +87,6 @@ def save_json(filename, data):
         with open(filename, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
     except: pass
 
-# ==========================================
-# 📄 PDF ENGINE (MCQ & ONE-LINER)
-# ==========================================
-
 def check_font():
     if not os.path.exists(FONT_FILE):
         url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
@@ -99,6 +95,10 @@ def check_font():
             with open(FONT_FILE, 'wb') as f: f.write(r.content)
         except: pass
     return os.path.abspath(FONT_FILE)
+
+# ==========================================
+# 📄 PDF ENGINE (MCQ & ONE-LINER)
+# ==========================================
 
 def generate_pdf_html(data_list, filename, title_text, date_range_text, brand_key='mockrise'):
     if not data_list: return None
@@ -158,15 +158,7 @@ def generate_pdf_html(data_list, filename, title_text, date_range_text, brand_ke
     </body></html>
     """
     template = Template(html_template)
-    rendered_html = template.render(
-        title=title_text, 
-        date_range=date_range_text, 
-        total=len(data_list), 
-        items=data_list, 
-        font_path=font_path,
-        brand_logo=brand_info['logo'],
-        brand_website=brand_info['website']
-    )
+    rendered_html = template.render(title=title_text, date_range=date_range_text, total=len(data_list), items=data_list, font_path=font_path, brand_logo=brand_info['logo'], brand_website=brand_info['website'])
     try:
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
@@ -215,15 +207,7 @@ def generate_oneliner_pdf_html(data_list, filename, title_text, date_range_text,
     </body></html>
     """
     template = Template(html_template)
-    rendered_html = template.render(
-        title=title_text, 
-        date_range=date_range_text, 
-        total=len(data_list), 
-        items=data_list, 
-        font_path=font_path,
-        brand_logo=brand_info['logo'],
-        brand_website=brand_info['website']
-    )
+    rendered_html = template.render(title=title_text, date_range=date_range_text, total=len(data_list), items=data_list, font_path=font_path, brand_logo=brand_info['logo'], brand_website=brand_info['website'])
     try:
         HTML(string=rendered_html, base_url=".").write_pdf(filename)
         return filename
@@ -249,17 +233,10 @@ def safe_send_poll(target_chat, question, options, correct_index, explanation):
             poll_e = explanation[:190] + "..."
             send_separate_exp = True
 
-        poll_msg = bot.send_poll(
-            chat_id=target_chat, question=poll_q, options=safe_options, type='quiz', 
-            correct_option_id=correct_index, explanation=poll_e, is_anonymous=True,
-            reply_to_message_id=sent_q_msg.message_id if sent_q_msg else None
-        )
+        poll_msg = bot.send_poll(chat_id=target_chat, question=poll_q, options=safe_options, type='quiz', correct_option_id=correct_index, explanation=poll_e, is_anonymous=True, reply_to_message_id=sent_q_msg.message_id if sent_q_msg else None)
 
         if send_separate_exp:
-            bot.send_message(
-                target_chat, f"💡 <b>विस्तृत व्याख्या:</b>\n<tg-spoiler>{explanation}</tg-spoiler>", 
-                reply_to_message_id=poll_msg.message_id, parse_mode='HTML'
-            )
+            bot.send_message(target_chat, f"💡 <b>विस्तृत व्याख्या:</b>\n<tg-spoiler>{explanation}</tg-spoiler>", reply_to_message_id=poll_msg.message_id, parse_mode='HTML')
         return True
     except ApiTelegramException as e:
         if e.error_code == 429:
@@ -280,7 +257,6 @@ def safe_send_message(target_chat, text):
 
 def process_send(message, keys):
     if message.chat.type != 'private': return
-    
     uid = message.from_user.id
     if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: 
         return bot.reply_to(message, "❌ आपके पास भेजने के लिए कोई प्रश्न नहीं हैं। पहले JSON भेजें।")
@@ -291,7 +267,6 @@ def process_send(message, keys):
         if key not in CHANNELS: continue
         target = CHANNELS[key]['id']
         bot.reply_to(message, f"🚀 Sending {len(data)} items to {CHANNELS[key]['name']}... कृपया प्रतीक्षा करें।")
-        
         success = 0
         one_liners_batch = []
         
@@ -312,29 +287,26 @@ def process_send(message, keys):
                     time.sleep(2)
                     current_msg = "📝 <b>वन-लाइनर (Cont..):</b>\n\n"
                 current_msg += ol + "\n"
-            if current_msg.strip():
-                safe_send_message(target, current_msg)
+            if current_msg.strip(): safe_send_message(target, current_msg)
             
         if success > 0:
             hist = load_json(DB_HISTORY)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             for q in data: hist.append({'timestamp': ts, 'channel': key, 'data': q})
             save_json(DB_HISTORY, hist)
-            
             bot.reply_to(message, f"✅ सफलता पूर्वक {success} प्रश्न {CHANNELS[key]['name']} पर भेज दिए गए हैं!")
             
     del quiz_buffer[uid]
     bot.reply_to(message, "✅ प्रक्रिया पूरी हुई। मेमोरी क्लियर कर दी गई है।")
 
 # ==========================================
-# 🕒 CHANNEL-SPECIFIC PDF BROADCAST LOGIC
+# 🕒 CHANNEL-SPECIFIC PDF BROADCAST
 # ==========================================
 
 def get_history_grouped_by_channel(days=1):
     hist = load_json(DB_HISTORY)
     now = datetime.now()
     grouped = {k: {'mcq': [], 'oneliner': []} for k in CHANNELS.keys()}
-    
     for h in hist:
         try:
             ts = datetime.strptime(h['timestamp'], "%Y-%m-%d %H:%M:%S")
@@ -342,10 +314,8 @@ def get_history_grouped_by_channel(days=1):
                 ch = h.get('channel')
                 if ch in grouped:
                     item = h.get('data', h)
-                    if 'options' in item:
-                        grouped[ch]['mcq'].append(item)
-                    elif 'answer' in item:
-                        grouped[ch]['oneliner'].append(item)
+                    if 'options' in item: grouped[ch]['mcq'].append(item)
+                    elif 'answer' in item: grouped[ch]['oneliner'].append(item)
         except: pass
     return grouped
 
@@ -386,20 +356,10 @@ def send_channel_pdfs(days=1, prefix="Daily", user_id=None):
                     sent_any = True
                 except: pass
                 os.remove(res)
-                
     return sent_any
 
-def auto_scheduler_thread():
-    while True:
-        try:
-            pass
-        except: pass
-        time.sleep(30)
-
-threading.Thread(target=auto_scheduler_thread, daemon=True).start()
-
 # ==========================================
-# 🎮 COMMANDS & MENU (Professional UI UI)
+# 🎮 COMMANDS & MENU (Professional UI)
 # ==========================================
 
 def get_menu_text(role, q_count):
@@ -430,30 +390,21 @@ def get_menu_text(role, q_count):
     else:
         return f"""👤 <b>Welcome User!</b>
 ━━━━━━━━━━━━━━━━━━━━
-
 📝 <b>User Menu</b>
 ├─ /pdf_daily — Private PDF बनाएँ
 ├─ /edit — प्रश्नों में सुधार करें
 └─ /cancel — JSON साफ़ करें
 
 🔒 <b>Admin Access:</b> /password
-
 <i>💡 केवल JSON डेटा भेजें। (मेमोरी में प्रश्न: {q_count})</i>"""
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome_and_help(message):
     if message.chat.type != 'private': return
     uid = message.from_user.id
-    users = load_json(DB_USERS)
-    users[str(uid)] = message.from_user.first_name
-    save_json(DB_USERS, users)
-    
+    users = load_json(DB_USERS); users[str(uid)] = message.from_user.first_name; save_json(DB_USERS, users)
     if uid not in user_sessions: user_sessions[uid] = 'user'
-    
-    role = user_sessions.get(uid, 'user')
-    q_count = len(quiz_buffer.get(uid, []))
-    
-    bot.send_message(message.chat.id, get_menu_text(role, q_count), parse_mode='HTML')
+    bot.send_message(message.chat.id, get_menu_text(user_sessions.get(uid, 'user'), len(quiz_buffer.get(uid, []))), parse_mode='HTML')
 
 @bot.message_handler(commands=['password'])
 def ask_password(message):
@@ -464,32 +415,14 @@ def ask_password(message):
 def cancel_json(message):
     if message.chat.type != 'private': return
     uid = message.from_user.id
-    if uid in json_fragments:
-        del json_fragments[uid]
-        bot.reply_to(message, "🚫 <b>मेमोरी साफ़ कर दी गई है।</b>\nकृपया अपना JSON दोबारा भेजें।", parse_mode='HTML')
-    else:
-        bot.reply_to(message, "✅ मेमोरी पहले से साफ़ है।")
-
-@bot.message_handler(commands=['stats', 'broadcast'])
-def admin_tools(m):
-    if m.chat.type != 'private': return
-    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ Access Denied!")
-    if m.text.startswith('/stats'):
-        bot.reply_to(m, f"📊 <b>Stats:</b>\nTotal Users: {len(load_json(DB_USERS))}", parse_mode='HTML')
-    else:
-        text = m.text.replace('/broadcast', '').strip()
-        if text:
-            for u in load_json(DB_USERS):
-                try: bot.send_message(u, f"📢 <b>Announcement:</b>\n\n{text}", parse_mode='HTML')
-                except: pass
-            bot.reply_to(m, "✅ Broadcast Done.")
+    if uid in json_fragments: del json_fragments[uid]
+    bot.reply_to(message, "✅ <b>मेमोरी साफ़ कर दी गई है।</b>", parse_mode='HTML')
 
 @bot.message_handler(commands=['mockrise', 'cpsir', 'ssc', 'kalam'])
 def admin_ch_handle(m):
     if m.chat.type != 'private': return
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
-    key = m.text.replace('/', '')
-    process_send(m, [key])
+    process_send(m, [m.text.replace('/', '')])
 
 @bot.message_handler(commands=['send_all'])
 def admin_send_all_handle(m):
@@ -497,92 +430,39 @@ def admin_send_all_handle(m):
     if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
     process_send(m, list(CHANNELS.keys()))
 
-@bot.message_handler(commands=['pdf_daily', 'pdf_oneliner', 'pdf_weekly'])
-def cmd_pdf_smart(m):
-    if m.chat.type != 'private': return
-    uid = m.from_user.id
-    role = user_sessions.get(uid, 'user')
-    cmd = m.text.replace('/', '')
-    
-    if uid in quiz_buffer and len(quiz_buffer[uid]) > 0:
-        data = quiz_buffer[uid]
-        is_oneliner = 'answer' in data[0]
-        bot.reply_to(m, f"📄 Generating Private {'One-Liner' if is_oneliner else 'MCQ'} PDF for {len(data)} questions...")
-        
-        date_str = datetime.now().strftime("%d-%m-%Y")
-        res = generate_oneliner_pdf_html(data, f"Private_OneLiner_{uid}.pdf", "MockRise One-Liners", date_str) if is_oneliner else generate_pdf_html(data, f"Private_MCQ_{uid}.pdf", "MockRise Quiz PDF", date_str)
-        if res:
-            with open(res, 'rb') as f: bot.send_document(m.chat.id, f, caption=f"📄 Your Custom PDF\n📅 Date: {date_str}\n🔢 Questions: {len(data)}\nBy: @MockRise")
-            os.remove(res)
-        return
-
-    if role != 'admin':
-        return bot.reply_to(m, "❌ आपके पास कोई डेटा नहीं है। पहले JSON भेजें।")
-    
-    days = 7 if 'weekly' in cmd else 1
-    prefix = "Weekly" if 'weekly' in cmd else "Daily"
-    
-    bot.reply_to(m, f"🚀 History चेक की जा रही है... सभी चैनल-वाइज PDF बनाकर डिस्पेच किए जा रहे हैं...")
-    
-    success = send_channel_pdfs(days, prefix, user_id=uid)
-    if not success:
-        bot.reply_to(m, "❌ इतिहास (History) में कोई प्रश्न मौजूद नहीं हैं।")
-
-@bot.message_handler(commands=['edit'])
-def cmd_edit(m):
-    if m.chat.type != 'private': return
-    uid = m.from_user.id
-    if uid not in quiz_buffer or len(quiz_buffer[uid]) == 0: return bot.reply_to(m, "❌ आपके पास एडिट करने के लिए कोई प्रश्न नहीं है।")
-    msg = bot.reply_to(m, f"Q No (1 से {len(quiz_buffer[uid])} के बीच) बताएँ जिसे एडिट करना है:")
-    bot.register_next_step_handler(msg, step_edit_num)
-
-def step_edit_num(m):
-    if m.chat.type != 'private': return
-    try:
-        idx = int(m.text) - 1
-        q = quiz_buffer[m.from_user.id][idx]
-        msg = bot.reply_to(m, f"Q{idx+1} के लिए नया JSON कोड भेजें:")
-        bot.register_next_step_handler(msg, step_edit_final, idx)
-    except: bot.reply_to(m, "❌ गलत नंबर।")
-
-def step_edit_final(m, idx):
-    if m.chat.type != 'private': return
-    try:
-        quiz_buffer[m.from_user.id][idx] = json.loads(m.text)
-        bot.reply_to(m, "✅ प्रश्न सफलतापूर्वक अपडेट कर दिया गया।")
-    except: bot.reply_to(m, "❌ JSON फॉर्मेट गलत है, अपडेट फेल।")
-
 # ==========================================
-# 📝 HTML NOTES BROADCAST FEATURE
+# 📝 BULLETPROOF HTML NOTES FEATURE
 # ==========================================
 
 @bot.message_handler(commands=['send_notes'])
 def cmd_send_notes(m):
     if m.chat.type != 'private': return
-    if user_sessions.get(m.from_user.id) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
+    uid = m.from_user.id
+    if user_sessions.get(uid) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
     
-    msg = bot.reply_to(m, "📝 <b>कृपया अपना HTML नोट्स या संदेश भेजें:</b>\n\n"
-                           "आप एक सामान्य संदेश या कोई <b>Image/Photo</b> भी भेज सकते हैं जिसके कैप्शन (Caption) में HTML कोड हो।\n\n"
-                           "👉 <b>सपोर्टेड फॉर्मेट्स:</b>\n"
-                           "• <code>&lt;b&gt;Bold Text&lt;/b&gt;</code>\n"
-                           "• <code>&lt;u&gt;Underline&lt;/u&gt;</code>\n"
-                           "• <code>&lt;tg-spoiler&gt;Spoiler&lt;/tg-spoiler&gt;</code>\n"
-                           "• <code>&lt;a href='https://link.com'&gt;Text Link&lt;/a&gt;</code>\n"
-                           "• बुलेट पॉइंट्स ( • ) या <h1>", parse_mode='HTML')
+    msg = bot.reply_to(m, "📝 <b>कृपया अपना HTML नोट्स या Photo (कैप्शन के साथ) भेजें:</b>\n"
+                          "👉 <i>(इसे कैंसिल करने के लिए /cancel टाइप करें)</i>", parse_mode='HTML')
     bot.register_next_step_handler(msg, process_html_notes)
 
 def process_html_notes(m):
     if m.chat.type != 'private': return
-    uid = m.from_user.id
-    if user_sessions.get(uid) != 'admin': return
     
+    # अगर यूजर ने कैंसिल किया
+    if m.content_type == 'text' and m.text.strip() == '/cancel':
+        bot.reply_to(m, "✅ नोट्स भेजना कैंसिल कर दिया गया है।")
+        return
+        
     notes_content = m.text if m.text else m.caption
-    if not notes_content:
-        return bot.reply_to(m, "❌ कोई टेक्स्ट संदेश या कैप्शन प्राप्त नहीं हुआ। कृपया दोबारा /send_notes कमांड दें।")
     
+    # अगर ना टेक्स्ट भेजा, ना फोटो में कैप्शन
+    if not notes_content:
+        msg = bot.reply_to(m, "❌ कोई टेक्स्ट या कैप्शन नहीं मिला। कृपया अपना मैसेज दोबारा भेजें या /cancel दबाएं:")
+        bot.register_next_step_handler(msg, process_html_notes)
+        return
+    
+    # <h1> <h2> को <b> में बदलें
     notes_content = notes_content.replace('<h1>', '<b>').replace('</h1>', '</b>')
     notes_content = notes_content.replace('<h2>', '<b>').replace('</h2>', '</b>')
-    notes_content = notes_content.replace('<h3>', '<b>').replace('</h3>', '</b>')
     
     bot.reply_to(m, "🚀 आपके HTML नोट्स सभी चैनल्स पर भेजे जा रहे हैं... कृपया प्रतीक्षा करें।")
     
@@ -596,13 +476,19 @@ def process_html_notes(m):
                 bot.send_message(target, notes_content, parse_mode='HTML')
             success_count += 1
             time.sleep(0.5)
-        except Exception as e:
-            bot.send_message(m.chat.id, f"❌ <b>{ch_info['name']}</b> par bhejne me error: {str(e)}", parse_mode='HTML')
-            
-    bot.reply_to(m, f"✅ सफलता पूर्वक {success_count} चैनल्स पर आपके नोट्स पब्लिश कर दिए गए हैं।")
+        except ApiTelegramException as e:
+            error_msg = str(e)
+            if "can't parse entities" in error_msg:
+                bot.send_message(m.chat.id, f"⚠️ <b>HTML Formatting Error:</b> आपके मैसेज में कोई टैग गलत है (जैसे <code>&lt;/b&gt;</code> भूल जाना)। कृपया सुधार कर दोबारा /send_notes करें।", parse_mode='HTML')
+                return # गलती है तो आगे मत भेजो
+            else:
+                bot.send_message(m.chat.id, f"❌ <b>{ch_info['name']}</b> पर Error: {error_msg}")
+                
+    if success_count > 0:
+        bot.reply_to(m, f"✅ सफलता पूर्वक {success_count} चैनल्स पर आपके नोट्स पब्लिश कर दिए गए हैं।")
 
 # ==========================================
-# 🧩 JSON HANDLER & MENU REFRESH
+# 🧩 ROBUST JSON & TEXT HANDLER
 # ==========================================
 
 @bot.message_handler(content_types=['text'])
@@ -637,7 +523,7 @@ def handle_text(m):
             return bot.reply_to(m, f"❌ Error: {str(e)}\n\n/cancel करें and दोबारा भेजें।")
     else:
         if not text.startswith('/'):
-            return bot.reply_to(m, "❌ <b>कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।</b>", parse_mode='HTML')
+            return bot.reply_to(m, "❌ कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।", parse_mode='HTML')
 
     if uid in quiz_buffer and not text.startswith('/'):
         bot.reply_to(m, "✅ <b>डेटा सफलतापूर्वक प्राप्त हुआ!</b> 👇", parse_mode='HTML')
