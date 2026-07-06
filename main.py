@@ -14,7 +14,7 @@ from telebot.apihelper import ApiTelegramException
 # ⚙️ CONFIGURATION
 # ==========================================
 
-BOT_TOKEN = "7654075050:AAFt3hMFSYcoHPRcrNUfGGVpy859hjKotok"
+BOT_TOKEN = "7654075050:AAFN1J1-SxpjrOAEkLLup16eTvMVQlgoU8E"
 MAIN_CHANNEL_ID = "@mockrise"
 
 # 🔐 PASSWORDS
@@ -24,7 +24,6 @@ PASS_ADMIN = "7852"   # Full Access
 BRANDS = {
     'mockrise': {
         'website': 'www.mockrise.com',
-        # Naya Logo URL lagaya gaya hai
         'logo': 'https://blogger.googleusercontent.com/img/a/AVvXsEhbqzX1vYBTW0G90MZo4vC6D06Sn0hXnN57XtwWxAkijUI5Rddzs5F7CV5PsBD4mJIf06tM97CjnV0Q8KDNlIjM4tJ7o32XmhJNR8vDTltIcmdwlnLTOhicbRuJ3mDq4p-NTCLYTuCwtmffepkOdPE8k7ywaYRqzGdaE12iILrnTNJC15x1Iuzb7Tewkw4=s1146'
     },
     'cpsir': {
@@ -280,7 +279,6 @@ def safe_send_message(target_chat, text):
         return False
 
 def process_send(message, keys):
-    """Sends JSON buffer to one or multiple channels"""
     if message.chat.type != 'private': return
     
     uid = message.from_user.id
@@ -369,11 +367,9 @@ def send_channel_pdfs(days=1, prefix="Daily", user_id=None):
             if res:
                 caption = f"📄 {prefix} Quiz\n📅 Date: {date_str}\n🔢 Questions: {len(mcq_data)}\nBy: {brand_name}"
                 try:
-                    with open(res, 'rb') as f:
-                        bot.send_document(target_chat, f, caption=caption)
+                    with open(res, 'rb') as f: bot.send_document(target_chat, f, caption=caption)
                     if user_id:
-                        with open(res, 'rb') as f:
-                            bot.send_document(user_id, f, caption=f"✅ <b>Sent to {target_chat}</b>\n\n{caption}", parse_mode='HTML')
+                        with open(res, 'rb') as f: bot.send_document(user_id, f, caption=f"✅ <b>Sent to {target_chat}</b>\n\n{caption}", parse_mode='HTML')
                     sent_any = True
                 except: pass
                 os.remove(res)
@@ -384,11 +380,9 @@ def send_channel_pdfs(days=1, prefix="Daily", user_id=None):
             if res:
                 caption = f"📄 {prefix} One-Liner\n📅 Date: {date_str}\n🔢 Questions: {len(oneliner_data)}\nBy: {brand_name}"
                 try:
-                    with open(res, 'rb') as f:
-                        bot.send_document(target_chat, f, caption=caption)
+                    with open(res, 'rb') as f: bot.send_document(target_chat, f, caption=caption)
                     if user_id:
-                        with open(res, 'rb') as f:
-                            bot.send_document(user_id, f, caption=f"✅ <b>Sent to {target_chat}</b>\n\n{caption}", parse_mode='HTML')
+                        with open(res, 'rb') as f: bot.send_document(user_id, f, caption=f"✅ <b>Sent to {target_chat}</b>\n\n{caption}", parse_mode='HTML')
                     sent_any = True
                 except: pass
                 os.remove(res)
@@ -398,8 +392,6 @@ def send_channel_pdfs(days=1, prefix="Daily", user_id=None):
 def auto_scheduler_thread():
     while True:
         try:
-            # Automatic background daily/weekly dispatch is disabled as per user instruction.
-            # Bot now retains memory, PDFs will only be sent when explicit manual commands are triggered.
             pass
         except: pass
         time.sleep(30)
@@ -407,25 +399,61 @@ def auto_scheduler_thread():
 threading.Thread(target=auto_scheduler_thread, daemon=True).start()
 
 # ==========================================
-# 🎮 COMMANDS & MENU (Private Only)
+# 🎮 COMMANDS & MENU (Professional UI UI)
 # ==========================================
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
+def get_menu_text(role, q_count):
+    if role == 'admin':
+        return f"""👑 <b>Welcome Owner — MockRise!</b>
+━━━━━━━━━━━━━━━━━━━━
+
+📝 <b>Quiz & PDF Management</b>
+├─ /edit — प्रश्नों में सुधार करें
+├─ /pdf_daily — आज का PDF सब जगह भेजें
+├─ /pdf_weekly — हफ्ते का PDF सब जगह भेजें
+└─ /cancel — JSON मेमोरी साफ़ करें
+
+🚀 <b>Channel Broadcasting</b>
+├─ /mockrise — MockRise Main पर भेजें
+├─ /cpsir — GuruDeep Classes पर भेजें
+├─ /ssc — SSC CGL/MTS पर भेजें
+├─ /kalam — Kalam Academy पर भेजें
+├─ /send_all — 🚀 सभी चैनल्स पर एक साथ भेजें
+└─ /send_notes — 📝 HTML नोट्स/फोटो भेजें
+
+👥 <b>User & Admin Tools</b>
+├─ /stats — Bot overall stats
+├─ /broadcast — 📢 सभी यूज़र्स को मैसेज भेजें
+└─ /password — Admin Access लें
+
+<i>💡 (मेमोरी में प्रश्न: {q_count})</i>"""
+    else:
+        return f"""👤 <b>Welcome User!</b>
+━━━━━━━━━━━━━━━━━━━━
+
+📝 <b>User Menu</b>
+├─ /pdf_daily — Private PDF बनाएँ
+├─ /edit — प्रश्नों में सुधार करें
+└─ /cancel — JSON साफ़ करें
+
+🔒 <b>Admin Access:</b> /password
+
+<i>💡 केवल JSON डेटा भेजें। (मेमोरी में प्रश्न: {q_count})</i>"""
+
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome_and_help(message):
     if message.chat.type != 'private': return
     uid = message.from_user.id
-    users = load_json(DB_USERS); users[str(uid)] = message.from_user.first_name; save_json(DB_USERS, users)
+    users = load_json(DB_USERS)
+    users[str(uid)] = message.from_user.first_name
+    save_json(DB_USERS, users)
+    
     if uid not in user_sessions: user_sessions[uid] = 'user'
-    if uid in json_fragments: del json_fragments[uid]
-        
-    welcome_msg = (
-        f"👋 <b>नमस्ते {message.from_user.first_name}! Bot में आपका स्वागत है।</b>\n\n"
-        f"🚨 <b>नोट:</b> केवल <b>JSON कोड</b> स्वीकार्य है।\n"
-        f"🔒 <b>Admin Access:</b> /password\n"
-        f"ℹ️ <b>मदद:</b> /help\n"
-        f"🚫 <b>कैंसिल:</b> /cancel"
-    )
-    bot.send_message(message.chat.id, welcome_msg, parse_mode='HTML')
+    
+    role = user_sessions.get(uid, 'user')
+    q_count = len(quiz_buffer.get(uid, []))
+    
+    bot.send_message(message.chat.id, get_menu_text(role, q_count), parse_mode='HTML')
 
 @bot.message_handler(commands=['password'])
 def ask_password(message):
@@ -441,24 +469,6 @@ def cancel_json(message):
         bot.reply_to(message, "🚫 <b>मेमोरी साफ़ कर दी गई है।</b>\nकृपया अपना JSON दोबारा भेजें।", parse_mode='HTML')
     else:
         bot.reply_to(message, "✅ मेमोरी पहले से साफ़ है।")
-
-@bot.message_handler(commands=['help'])
-def cmd_help(m):
-    if m.chat.type != 'private': return
-    uid = m.from_user.id
-    role = user_sessions.get(uid, 'user')
-    q_count = len(quiz_buffer.get(uid, []))
-    txt = f"🤖 <b>Bot Panel</b>\n👤 <b>Status:</b> {role.upper()}\n📝 <b>बनाए गए प्रश्न:</b> {q_count}\n\n"
-    if role == 'admin': 
-        txt += "👑 <b>Admin Panel:</b>\n"
-        txt += "➡️ एक चैनल पर भेजें: /mockrise, /cpsir, /ssc, /kalam\n"
-        txt += "🚀 <b>सब पर एक साथ भेजें:</b> /send_all\n\n"
-        txt += "📝 <b>HTML नोट्स भेजें:</b> /send_notes\n\n"
-        txt += "<b>Manual PDFs Broadcast (Jab aap bolenge tabhi jayega):</b>\n/pdf_daily - Aaj ka PDF sabhi jagah bhejen\n/pdf_weekly - Hafte ka PDF sabhi jagah bhejen\n"
-        txt += "टूल्स: /edit, /stats, /broadcast, /cancel"
-    else:
-        txt += "👤 <b>User Panel:</b>\n/pdf_daily - Private PDF\n/edit - एडिट\n/cancel - JSON साफ़ करें"
-    bot.reply_to(m, txt, parse_mode='HTML')
 
 @bot.message_handler(commands=['stats', 'broadcast'])
 def admin_tools(m):
@@ -494,7 +504,6 @@ def cmd_pdf_smart(m):
     role = user_sessions.get(uid, 'user')
     cmd = m.text.replace('/', '')
     
-    # 1. Private Buffer Check 
     if uid in quiz_buffer and len(quiz_buffer[uid]) > 0:
         data = quiz_buffer[uid]
         is_oneliner = 'answer' in data[0]
@@ -507,7 +516,6 @@ def cmd_pdf_smart(m):
             os.remove(res)
         return
 
-    # 2. History Check (Channel Dispatch)
     if role != 'admin':
         return bot.reply_to(m, "❌ आपके पास कोई डेटा नहीं है। पहले JSON भेजें।")
     
@@ -545,7 +553,7 @@ def step_edit_final(m, idx):
     except: bot.reply_to(m, "❌ JSON फॉर्मेट गलत है, अपडेट फेल।")
 
 # ==========================================
-# 📝 NEW: HTML NOTES BROADCAST FEATURE
+# 📝 HTML NOTES BROADCAST FEATURE
 # ==========================================
 
 @bot.message_handler(commands=['send_notes'])
@@ -568,12 +576,10 @@ def process_html_notes(m):
     uid = m.from_user.id
     if user_sessions.get(uid) != 'admin': return
     
-    # Text message ya Photo caption dono me se data extract karein
     notes_content = m.text if m.text else m.caption
     if not notes_content:
         return bot.reply_to(m, "❌ कोई टेक्स्ट संदेश या कैप्शन प्राप्त नहीं हुआ। कृपया दोबारा /send_notes कमांड दें।")
     
-    # Preprocess HTML (Telegram standard HTML me H1 support nahi karta, isliye bold me change karein taaki API crash na ho)
     notes_content = notes_content.replace('<h1>', '<b>').replace('</h1>', '</b>')
     notes_content = notes_content.replace('<h2>', '<b>').replace('</h2>', '</b>')
     notes_content = notes_content.replace('<h3>', '<b>').replace('</h3>', '</b>')
@@ -585,10 +591,8 @@ def process_html_notes(m):
         target = ch_info['id']
         try:
             if m.content_type == 'photo':
-                # Agar photo bhej rahe hain to photo with HTML caption bheje
                 bot.send_photo(target, m.photo[-1].file_id, caption=notes_content, parse_mode='HTML')
             else:
-                # Agar sirf text message hai
                 bot.send_message(target, notes_content, parse_mode='HTML')
             success_count += 1
             time.sleep(0.5)
@@ -598,7 +602,7 @@ def process_html_notes(m):
     bot.reply_to(m, f"✅ सफलता पूर्वक {success_count} चैनल्स पर आपके नोट्स पब्लिश कर दिए गए हैं।")
 
 # ==========================================
-# 🧩 ROBUST FRAGMENTED JSON HANDLER
+# 🧩 JSON HANDLER & MENU REFRESH
 # ==========================================
 
 @bot.message_handler(content_types=['text'])
@@ -610,7 +614,9 @@ def handle_text(m):
     
     if text == PASS_ADMIN: 
         user_sessions[uid] = 'admin'
-        return bot.reply_to(m, "🔓 <b>Admin Panel Unlocked!</b>", parse_mode='HTML')
+        bot.reply_to(m, "🔓 <b>Admin Panel Unlocked!</b>", parse_mode='HTML')
+        bot.send_message(m.chat.id, get_menu_text('admin', len(quiz_buffer.get(uid, []))), parse_mode='HTML')
+        return
     
     if uid not in user_sessions: user_sessions[uid] = 'user'
     role = user_sessions[uid]
@@ -634,16 +640,8 @@ def handle_text(m):
             return bot.reply_to(m, "❌ <b>कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें।</b>", parse_mode='HTML')
 
     if uid in quiz_buffer and not text.startswith('/'):
-        q_count = len(quiz_buffer[uid])
-        msg = f"✅ <b>डेटा प्राप्त हुआ ({q_count} प्रश्न तैयार हैं)</b>\n\n"
-        msg += f"✏️ /edit - प्रश्नों में सुधार करें\n"
-        msg += f"📄 /pdf_daily - (Private) PDF बनाएं\n\n"
-        
-        if role == 'admin':
-            msg += "👇 <b>चैनल पर भेजें:</b>\n/mockrise, /cpsir, /ssc, /kalam\n"
-            msg += "🚀 <b>सब पर एक साथ भेजें:</b> /send_all"
-            
-        bot.reply_to(m, msg, parse_mode='HTML')
+        bot.reply_to(m, "✅ <b>डेटा सफलतापूर्वक प्राप्त हुआ!</b> 👇", parse_mode='HTML')
+        bot.send_message(m.chat.id, get_menu_text(role, len(quiz_buffer[uid])), parse_mode='HTML')
 
 if __name__ == "__main__":
     keep_alive()
