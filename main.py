@@ -1,3 +1,7 @@
+import sys
+# यह लाइन कंसोल/टर्मिनल में हिंदी और Emojis (UTF-8) को सही से दिखाने के लिए है
+sys.stdout.reconfigure(encoding='utf-8')
+
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import json
@@ -11,10 +15,10 @@ from weasyprint import HTML
 from telebot.apihelper import ApiTelegramException
 
 # ==========================================
-# âš™ï¸ CONFIGURATION
+# ⚙️ CONFIGURATION
 # ==========================================
 
-BOT_TOKEN = "7654075050:AAECwInoBMxH6Fa8AxIw7WWLqKmQlm5o-AA"
+BOT_TOKEN = "7654075050:AAGyj5jKaDOClKmDe7w1j1ZL5yBkimGBtQM"
 MAIN_CHANNEL_ID = "@mockrise"
 PASS_ADMIN = "7852"
 
@@ -49,12 +53,12 @@ temp_broadcast = {}
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# ðŸŒ FLASK SERVER & DATA HANDLING
+# 🌐 FLASK SERVER & DATA HANDLING
 # ==========================================
 
 app = Flask('')
 @app.route('/')
-def home(): return "âœ… Bot is Running!"
+def home(): return "✅ Bot is Running!"
 def run_server(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 def keep_alive(): threading.Thread(target=run_server, daemon=True).start()
 
@@ -70,7 +74,7 @@ def save_json(filename, data):
     except: pass
 
 # ==========================================
-# ðŸ“ NEW PDF GENERATION FUNCTIONS
+# 📝 NEW PDF GENERATION FUNCTIONS
 # ==========================================
 
 def create_pdf_from_html_string(html_content, filename):
@@ -95,38 +99,38 @@ def create_pdf_from_html_string(html_content, filename):
         return False
 
 # ==========================================
-# âš™ï¸ BOT COMMANDS & MENUS
+# ⚙️ BOT COMMANDS & MENUS
 # ==========================================
 
 def get_menu_text(role, q_count):
     if role == 'admin':
-        return f"""ðŸ‘‘ <b>Welcome Owner â€” MockRise!</b>
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-ðŸ“ <b>Quiz & PDF Management</b>
-â”œâ”€ /pdf_daily â€” à¤†à¤œ à¤•à¤¾ PDF 
-â”œâ”€ /pdf_weekly â€” à¤¹à¤«à¥à¤¤à¥‡ à¤•à¤¾ PDF
-â”œâ”€ /pdf_ca_weekly â€” ðŸ†• Current Affairs Weekly PDF
-â”œâ”€ /pdf_quiz_weekly â€” ðŸ†• Weekly Quiz PDF
-â”œâ”€ /html_to_pdf â€” ðŸ†• HTML à¤¸à¥‡ PDF à¤¬à¤¨à¤¾à¤à¤
-â”œâ”€ /edit â€” à¤ªà¥à¤°à¤¶à¥à¤¨à¥‹à¤‚ à¤®à¥‡à¤‚ à¤¸à¥à¤§à¤¾à¤° à¤•à¤°à¥‡à¤‚
-â””â”€ /cancel â€” JSON à¤®à¥‡à¤®à¥‹à¤°à¥€ à¤¸à¤¾à¤«à¤¼ à¤•à¤°à¥‡à¤‚
+        return f"""👑 <b>Welcome Owner — MockRise!</b>
+━━━━━━━━━━━━━━━━━━━━
+📝 <b>Quiz & PDF Management</b>
+├─ /pdf_daily — आज का PDF 
+├─ /pdf_weekly — हफ्ते का PDF
+├─ /pdf_ca_weekly — 🆕 Current Affairs Weekly PDF
+├─ /pdf_quiz_weekly — 🆕 Weekly Quiz PDF
+├─ /html_to_pdf — 🆕 HTML से PDF बनाएँ
+├─ /edit — प्रश्नों में सुधार करें
+└─ /cancel — JSON मेमोरी साफ़ करें
 
-ðŸš€ <b>Channel Broadcasting</b>
-â”œâ”€ /mockrise â€” MockRise Main à¤ªà¤° à¤­à¥‡à¤œà¥‡à¤‚
-â”œâ”€ /send_all â€” ðŸš€ à¤¸à¤­à¥€ à¤šà¥ˆà¤¨à¤²à¥à¤¸ à¤ªà¤° à¤à¤• à¤¸à¤¾à¤¥ à¤­à¥‡à¤œà¥‡à¤‚
-â””â”€ /send_notes â€” ðŸ“ HTML à¤¨à¥‹à¤Ÿà¥à¤¸/à¤«à¥‹à¤Ÿà¥‹ à¤­à¥‡à¤œà¥‡à¤‚
+🚀 <b>Channel Broadcasting</b>
+├─ /mockrise — MockRise Main पर भेजें
+├─ /send_all — 🚀 सभी चैनल्स पर एक साथ भेजें
+└─ /send_notes — 📝 HTML नोट्स/फोटो भेजें
 
-<i>ðŸ’¡ (à¤®à¥‡à¤®à¥‹à¤°à¥€ à¤®à¥‡à¤‚ à¤ªà¥à¤°à¤¶à¥à¤¨: {q_count})</i>"""
+<i>💡 (मेमोरी में प्रश्न: {q_count})</i>"""
     else:
-        return f"""ðŸ‘¤ <b>Welcome User!</b>
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-ðŸ“ <b>User Menu</b>
-â”œâ”€ /pdf_daily â€” Private PDF à¤¬à¤¨à¤¾à¤à¤
-â”œâ”€ /html_to_pdf â€” ðŸ†• HTML à¤¸à¥‡ PDF à¤¬à¤¨à¤¾à¤à¤
-â””â”€ /cancel â€” JSON à¤¸à¤¾à¤«à¤¼ à¤•à¤°à¥‡à¤‚
+        return f"""👤 <b>Welcome User!</b>
+━━━━━━━━━━━━━━━━━━━━
+📝 <b>User Menu</b>
+├─ /pdf_daily — Private PDF बनाएँ
+├─ /html_to_pdf — 🆕 HTML से PDF बनाएँ
+└─ /cancel — JSON साफ़ करें
 
-ðŸ”’ <b>Admin Access:</b> /password
-<i>ðŸ’¡ à¤•à¥‡à¤µà¤² JSON à¤¡à¥‡à¤Ÿà¤¾ à¤­à¥‡à¤œà¥‡à¤‚à¥¤ (à¤®à¥‡à¤®à¥‹à¤°à¥€ à¤®à¥‡à¤‚ à¤ªà¥à¤°à¤¶à¥à¤¨: {q_count})</i>"""
+🔒 <b>Admin Access:</b> /password
+<i>💡 केवल JSON डेटा भेजें। (मेमोरी में प्रश्न: {q_count})</i>"""
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome_and_help(message):
@@ -137,7 +141,7 @@ def send_welcome_and_help(message):
 
 @bot.message_handler(commands=['password'])
 def ask_password(message):
-    bot.reply_to(message, "ðŸ”‘ <b>à¤•à¥ƒà¤ªà¤¯à¤¾ à¤…à¤ªà¤¨à¤¾ à¤ªà¤¾à¤¸à¤µà¤°à¥à¤¡ à¤Ÿà¤¾à¤‡à¤ª à¤•à¤°à¤•à¥‡ à¤­à¥‡à¤œà¥‡à¤‚:</b>", parse_mode='HTML')
+    bot.reply_to(message, "🔑 <b>कृपया अपना पासवर्ड टाइप करके भेजें:</b>", parse_mode='HTML')
 
 @bot.message_handler(commands=['cancel'])
 def cancel_json(message):
@@ -145,61 +149,61 @@ def cancel_json(message):
     if uid in json_fragments: del json_fragments[uid]
     if uid in temp_broadcast: del temp_broadcast[uid]
     if uid in quiz_buffer: del quiz_buffer[uid]
-    bot.reply_to(message, "âœ… <b>à¤®à¥‡à¤®à¥‹à¤°à¥€ à¤¸à¤¾à¤«à¤¼ à¤•à¤° à¤¦à¥€ à¤—à¤ˆ à¤¹à¥ˆà¥¤</b>", parse_mode='HTML')
+    bot.reply_to(message, "✅ <b>मेमोरी साफ़ कर दी गई है।</b>", parse_mode='HTML')
 
 # ==========================================
-# ðŸ“ NEW: HTML TO PDF & WEEKLY PDF COMMANDS
+# 📝 NEW: HTML TO PDF & WEEKLY PDF COMMANDS
 # ==========================================
 
 @bot.message_handler(commands=['html_to_pdf'])
 def cmd_html_to_pdf(m):
-    msg = bot.reply_to(m, "ðŸ“ <b>à¤…à¤ªà¤¨à¤¾ HTML à¤•à¥‹à¤¡ à¤­à¥‡à¤œà¥‡à¤‚:</b>\nðŸ‘‰ <i>(à¤‡à¤¸à¥‡ à¤•à¥ˆà¤‚à¤¸à¤¿à¤² à¤•à¤°à¤¨à¥‡ à¤•à¥‡ à¤²à¤¿à¤ /cancel à¤Ÿà¤¾à¤‡à¤ª à¤•à¤°à¥‡à¤‚)</i>", parse_mode='HTML')
+    msg = bot.reply_to(m, "📝 <b>अपना HTML कोड भेजें:</b>\n👉 <i>(इसे कैंसिल करने के लिए /cancel टाइप करें)</i>", parse_mode='HTML')
     bot.register_next_step_handler(msg, process_custom_html_to_pdf)
 
 def process_custom_html_to_pdf(m):
     if m.text.strip() == '/cancel':
-        return bot.reply_to(m, "âœ… à¤•à¥ˆà¤‚à¤¸à¤¿à¤² à¤•à¤° à¤¦à¤¿à¤¯à¤¾ à¤—à¤¯à¤¾ à¤¹à¥ˆà¥¤")
+        return bot.reply_to(m, "✅ कैंसिल कर दिया गया है।")
     
-    bot.reply_to(m, "â³ PDF à¤¤à¥ˆà¤¯à¤¾à¤° à¤•à¤¿à¤¯à¤¾ à¤œà¤¾ à¤°à¤¹à¤¾ à¤¹à¥ˆ...")
+    bot.reply_to(m, "⏳ PDF तैयार किया जा रहा है...")
     pdf_path = f"Custom_Notes_{m.from_user.id}.pdf"
     
     if create_pdf_from_html_string(m.text, pdf_path):
         with open(pdf_path, 'rb') as pdf_file:
-            bot.send_document(m.chat.id, pdf_file, caption="âœ… à¤†à¤ªà¤•à¤¾ PDF à¤¤à¥ˆà¤¯à¤¾à¤° à¤¹à¥ˆ!")
+            bot.send_document(m.chat.id, pdf_file, caption="✅ आपका PDF तैयार है!")
         os.remove(pdf_path)
     else:
-        bot.reply_to(m, "âŒ HTML à¤¸à¥‡ PDF à¤¬à¤¨à¤¾à¤¨à¥‡ à¤®à¥‡à¤‚ à¤¤à¥à¤°à¥à¤Ÿà¤¿ à¤¹à¥à¤ˆà¥¤ à¤•à¥ƒà¤ªà¤¯à¤¾ à¤…à¤ªà¤¨à¤¾ HTML à¤œà¤¾à¤‚à¤šà¥‡à¤‚à¥¤")
+        bot.reply_to(m, "❌ HTML से PDF बनाने में त्रुटि हुई। कृपया अपना HTML जांचें।")
 
 @bot.message_handler(commands=['pdf_ca_weekly', 'pdf_quiz_weekly'])
 def cmd_weekly_pdfs(m):
     uid = m.from_user.id
     if uid not in quiz_buffer or not quiz_buffer[uid]:
-        return bot.reply_to(m, "âŒ à¤ªà¤¹à¤²à¥‡ à¤®à¥‡à¤®à¥‹à¤°à¥€ à¤®à¥‡à¤‚ JSON à¤¡à¥‡à¤Ÿà¤¾ à¤­à¥‡à¤œà¥‡à¤‚à¥¤ (Questions: 0)")
+        return bot.reply_to(m, "❌ पहले मेमोरी में JSON डेटा भेजें। (Questions: 0)")
         
     cmd = m.text.split('@')[0]
     title = "Weekly Current Affairs" if cmd == '/pdf_ca_weekly' else "Weekly Quiz"
     
-    bot.reply_to(m, f"â³ {title} PDF à¤œà¤¨à¤°à¥‡à¤Ÿ à¤•à¤¿à¤¯à¤¾ à¤œà¤¾ à¤°à¤¹à¤¾ à¤¹à¥ˆ...")
+    bot.reply_to(m, f"⏳ {title} PDF जनरेट किया जा रहा है...")
     
-    # ðŸ†• Basic PDF Generation logic from JSON Buffer for Weekly
+    # 🆕 Basic PDF Generation logic from JSON Buffer for Weekly
     html_content = f"<h1 style='text-align:center;'>{title}</h1>"
     for i, q in enumerate(quiz_buffer[uid]):
-        html_content += f"<h3>Q{{i+1}}. {{q.get('question', '')}}</h3>"
+        html_content += f"<h3>Q{i+1}. {q.get('question', '')}</h3>"
         for opt in q.get('option', []):
-            html_content += f"<div>- {{opt}}</div>"
-        html_content += f"<br><b>Answer:</b> {{q.get('answer', '')}}<br>"
-        html_content += f"<b>Solution:</b> {{q.get('solution', '')}}<hr>"
+            html_content += f"<div>- {opt}</div>"
+        html_content += f"<br><b>Answer:</b> {q.get('answer', '')}<br>"
+        html_content += f"<b>Solution:</b> {q.get('solution', '')}<hr>"
 
-    pdf_path = f"{{title.replace(' ', '_')}}.pdf"
+    pdf_path = f"{title.replace(' ', '_')}.pdf"
     if create_pdf_from_html_string(html_content, pdf_path):
         with open(pdf_path, 'rb') as pdf_file:
-            bot.send_document(m.chat.id, pdf_file, caption=f"âœ… {{title}} PDF à¤¤à¥ˆà¤¯à¤¾à¤° à¤¹à¥ˆ!")
+            bot.send_document(m.chat.id, pdf_file, caption=f"✅ {title} PDF तैयार है!")
         os.remove(pdf_path)
     else:
-        bot.reply_to(m, "âŒ PDF à¤œà¤¨à¤°à¥‡à¤Ÿ à¤•à¤°à¤¨à¥‡ à¤®à¥‡à¤‚ à¤¤à¥à¤°à¥à¤Ÿà¤¿à¥¤")
+        bot.reply_to(m, "❌ PDF जनरेट करने में त्रुटि।")
 
 # ==========================================
-# ðŸ§© ROBUST JSON & TEXT HANDLER
+# 🧩 ROBUST JSON & TEXT HANDLER
 # ==========================================
 
 def clean_json_string(text):
@@ -216,14 +220,14 @@ def handle_text(m):
     
     if text == PASS_ADMIN: 
         user_sessions[uid] = 'admin'
-        bot.reply_to(m, "ðŸ”“ <b>Admin Panel Unlocked!</b>", parse_mode='HTML')
+        bot.reply_to(m, "🔓 <b>Admin Panel Unlocked!</b>", parse_mode='HTML')
         return bot.send_message(m.chat.id, get_menu_text('admin', len(quiz_buffer.get(uid, []))), parse_mode='HTML')
     
     if uid not in user_sessions: user_sessions[uid] = 'user'
 
     cleaned_text = clean_json_string(text)
 
-    # ðŸ†• Robust JSON Builder
+    # 🆕 Robust JSON Builder
     if cleaned_text.startswith('[') or uid in json_fragments:
         if uid not in json_fragments:
             json_fragments[uid] = cleaned_text
@@ -233,16 +237,16 @@ def handle_text(m):
         try:
             quiz_buffer[uid] = json.loads(json_fragments[uid])
             del json_fragments[uid] 
-            bot.reply_to(m, "âœ… <b>à¤¡à¥‡à¤Ÿà¤¾ à¤¸à¤«à¤²à¤¤à¤¾à¤ªà¥‚à¤°à¥à¤µà¤• à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤ à¤¹à¥à¤†!</b> ðŸ‘‡", parse_mode='HTML')
+            bot.reply_to(m, "✅ <b>डेटा सफलतापूर्वक प्राप्त हुआ!</b> 👇", parse_mode='HTML')
             bot.send_message(m.chat.id, get_menu_text(user_sessions[uid], len(quiz_buffer[uid])), parse_mode='HTML')
         except json.JSONDecodeError:
-            return bot.reply_to(m, f"â³ <b>JSON à¤•à¤¾ à¤¹à¤¿à¤¸à¥à¤¸à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤ à¤¹à¥à¤†...</b>\nà¤¬à¤¾à¤•à¥€ à¤•à¤¾ à¤¹à¤¿à¤¸à¥à¤¸à¤¾ à¤­à¥‡à¤œà¥‡à¤‚à¥¤ (Total: {len(json_fragments[uid])} chars)", parse_mode='HTML')
+            return bot.reply_to(m, f"⏳ <b>JSON का हिस्सा प्राप्त हुआ...</b>\nबाकी का हिस्सा भेजें। (Total: {len(json_fragments[uid])} chars)", parse_mode='HTML')
         except Exception as e:
             del json_fragments[uid]
-            return bot.reply_to(m, f"âŒ Error: {e}. /cancel à¤•à¤°à¥‡à¤‚ à¤”à¤° à¤¦à¥‹à¤¬à¤¾à¤°à¤¾ à¤­à¥‡à¤œà¥‡à¤‚à¥¤")
+            return bot.reply_to(m, f"❌ Error: {e}. /cancel करें और दोबारा भेजें।")
     else:
         if not text.startswith('/'):
-            return bot.reply_to(m, "âŒ à¤•à¥ƒà¤ªà¤¯à¤¾ à¤•à¥‡à¤µà¤² JSON à¤«à¥‰à¤°à¥à¤®à¥‡à¤Ÿ (`[...]`) à¤®à¥‡à¤‚ à¤¹à¥€ à¤ªà¥à¤°à¤¶à¥à¤¨ à¤­à¥‡à¤œà¥‡à¤‚ à¤¯à¤¾ à¤•à¤®à¤¾à¤‚à¤¡ à¤•à¤¾ à¤‰à¤ªà¤¯à¥‹à¤— à¤•à¤°à¥‡à¤‚à¥¤", parse_mode='HTML')
+            return bot.reply_to(m, "❌ कृपया केवल JSON फॉर्मेट (`[...]`) में ही प्रश्न भेजें या कमांड का उपयोग करें।", parse_mode='HTML')
 
 if __name__ == "__main__":
     keep_alive()
