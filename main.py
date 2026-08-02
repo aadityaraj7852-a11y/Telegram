@@ -1,5 +1,5 @@
 import sys
-# यह लाइन कंसोल/टर्मिनल में हिंदी और Emojis (UTF-8) को सही से दिखाने के लिए है
+# टर्मिनल/कंसोल में हिंदी और Emojis सही से दिखाने के लिए
 sys.stdout.reconfigure(encoding='utf-8')
 
 import telebot
@@ -11,26 +11,19 @@ import re
 import threading
 import requests
 from flask import Flask
-from weasyprint import HTML
 from telebot.apihelper import ApiTelegramException
 
 # ==========================================
 # ⚙️ CONFIGURATION
 # ==========================================
 
-BOT_TOKEN = "7654075050:AAGyj5jKaDOClKmDe7w1j1ZL5yBkimGBtQM"
+BOT_TOKEN = "7654075050:AAHD0Sb3t2onuMR_vfpe2iCkjwlgjf_9o8U"
 MAIN_CHANNEL_ID = "@mockrise"
 PASS_ADMIN = "7852"
 
 BRANDS = {
-    'mockrise': {
-        'website': 'www.mockrise.com',
-        'logo': 'https://blogger.googleusercontent.com/img/a/AVvXsEhbqzX1vYBTW0G90MZo4vC6D06Sn0hXnN57XtwWxAkijUI5Rddzs5F7CV5PsBD4mJIf06tM97CjnV0Q8KDNlIjM4tJ7o32XmhJNR8vDTltIcmdwlnLTOhicbRuJ3mDq4p-NTCLYTuCwtmffepkOdPE8k7ywaYRqzGdaE12iILrnTNJC15x1Iuzb7Tewkw4=s1146'
-    },
-    'cpsir': {
-        'website': 'https://www.gurudeepaiacademy.com/',
-        'logo': 'https://blogger.googleusercontent.com/img/a/AVvXsEgUuZDpANHyMD9YoC5ftPljTkNKbJ5rFJJkdV2S5sDWjD-bj19PPDnexZ-0deX07JvtXLp5OtI_dMtBeH9EE6b7PUkJ8eV94I5k8Q_H7TPkNm7WRRiYfQLo4p6mMl-hnqbVQ3IytxmtLx-vxAOgOo6jwbI0wiWnBaY-XeTERgK9id1NCrPDbfj1smHvfm0=s640'
-    }
+    'mockrise': {'website': 'www.mockrise.com'},
+    'cpsir': {'website': 'https://www.gurudeepaiacademy.com/'}
 }
 
 CHANNELS = {
@@ -39,11 +32,6 @@ CHANNELS = {
     'ssc': {'id': '@ssc_cgl_chsl_mts_ntpc_upsc', 'name': 'SSC CGL/MTS', 'brand': 'mockrise'},
     'kalam': {'id': '@rajasthan_gk_kalam_reet_ldc_ras', 'name': 'Kalam Academy', 'brand': 'mockrise'}
 }
-
-DB_STATS = "user_stats.json"
-DB_HISTORY = "history.json"
-DB_USERS = "users_db.json"
-FONT_FILE = "NotoSansDevanagari-Regular.ttf"
 
 quiz_buffer = {}
 json_fragments = {}
@@ -58,45 +46,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "✅ Bot is Running!"
+def home(): return "✅ Bot is Running without PDF feature!"
 def run_server(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 def keep_alive(): threading.Thread(target=run_server, daemon=True).start()
-
-def load_json(filename):
-    if not os.path.exists(filename): return [] if filename == DB_HISTORY else {}
-    try:
-        with open(filename, 'r', encoding='utf-8') as f: return json.load(f)
-    except: return [] if filename == DB_HISTORY else {}
-
-def save_json(filename, data):
-    try:
-        with open(filename, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
-    except: pass
-
-# ==========================================
-# 📝 NEW PDF GENERATION FUNCTIONS
-# ==========================================
-
-def create_pdf_from_html_string(html_content, filename):
-    """Generates PDF from HTML string using WeasyPrint"""
-    try:
-        # Wrap in basic HTML/CSS if not present to ensure layout
-        if "<html" not in html_content.lower():
-            html_content = f"""
-            <html>
-            <head><style>
-                @page {{ size: A4; margin: 15mm; background-color: #fdfbf7; }}
-                body {{ font-family: sans-serif; color: #333; line-height: 1.6; font-size: 14px; }}
-                h1, h2, h3 {{ color: #2c3e50; }}
-            </style></head>
-            <body>{html_content}</body>
-            </html>
-            """
-        HTML(string=html_content).write_pdf(filename)
-        return True
-    except Exception as e:
-        print(f"PDF Generation Error: {e}")
-        return False
 
 # ==========================================
 # ⚙️ BOT COMMANDS & MENUS
@@ -106,12 +58,7 @@ def get_menu_text(role, q_count):
     if role == 'admin':
         return f"""👑 <b>Welcome Owner — MockRise!</b>
 ━━━━━━━━━━━━━━━━━━━━
-📝 <b>Quiz & PDF Management</b>
-├─ /pdf_daily — आज का PDF 
-├─ /pdf_weekly — हफ्ते का PDF
-├─ /pdf_ca_weekly — 🆕 Current Affairs Weekly PDF
-├─ /pdf_quiz_weekly — 🆕 Weekly Quiz PDF
-├─ /html_to_pdf — 🆕 HTML से PDF बनाएँ
+📝 <b>Quiz Management</b>
 ├─ /edit — प्रश्नों में सुधार करें
 └─ /cancel — JSON मेमोरी साफ़ करें
 
@@ -125,8 +72,6 @@ def get_menu_text(role, q_count):
         return f"""👤 <b>Welcome User!</b>
 ━━━━━━━━━━━━━━━━━━━━
 📝 <b>User Menu</b>
-├─ /pdf_daily — Private PDF बनाएँ
-├─ /html_to_pdf — 🆕 HTML से PDF बनाएँ
 └─ /cancel — JSON साफ़ करें
 
 🔒 <b>Admin Access:</b> /password
@@ -152,62 +97,82 @@ def cancel_json(message):
     bot.reply_to(message, "✅ <b>मेमोरी साफ़ कर दी गई है।</b>", parse_mode='HTML')
 
 # ==========================================
-# 📝 NEW: HTML TO PDF & WEEKLY PDF COMMANDS
+# 📝 SEND NOTES / HTML HANDLER
 # ==========================================
 
-@bot.message_handler(commands=['html_to_pdf'])
-def cmd_html_to_pdf(m):
-    msg = bot.reply_to(m, "📝 <b>अपना HTML कोड भेजें:</b>\n👉 <i>(इसे कैंसिल करने के लिए /cancel टाइप करें)</i>", parse_mode='HTML')
-    bot.register_next_step_handler(msg, process_custom_html_to_pdf)
-
-def process_custom_html_to_pdf(m):
-    if m.text.strip() == '/cancel':
-        return bot.reply_to(m, "✅ कैंसिल कर दिया गया है।")
-    
-    bot.reply_to(m, "⏳ PDF तैयार किया जा रहा है...")
-    pdf_path = f"Custom_Notes_{m.from_user.id}.pdf"
-    
-    if create_pdf_from_html_string(m.text, pdf_path):
-        with open(pdf_path, 'rb') as pdf_file:
-            bot.send_document(m.chat.id, pdf_file, caption="✅ आपका PDF तैयार है!")
-        os.remove(pdf_path)
-    else:
-        bot.reply_to(m, "❌ HTML से PDF बनाने में त्रुटि हुई। कृपया अपना HTML जांचें।")
-
-@bot.message_handler(commands=['pdf_ca_weekly', 'pdf_quiz_weekly'])
-def cmd_weekly_pdfs(m):
+@bot.message_handler(commands=['send_notes'])
+def cmd_send_notes(m):
+    if m.chat.type != 'private': return
     uid = m.from_user.id
-    if uid not in quiz_buffer or not quiz_buffer[uid]:
-        return bot.reply_to(m, "❌ पहले मेमोरी में JSON डेटा भेजें। (Questions: 0)")
-        
-    cmd = m.text.split('@')[0]
-    title = "Weekly Current Affairs" if cmd == '/pdf_ca_weekly' else "Weekly Quiz"
+    if user_sessions.get(uid) != 'admin': return bot.reply_to(m, "❌ <b>Access Denied!</b>", parse_mode='HTML')
     
-    bot.reply_to(m, f"⏳ {title} PDF जनरेट किया जा रहा है...")
-    
-    # 🆕 Basic PDF Generation logic from JSON Buffer for Weekly
-    html_content = f"<h1 style='text-align:center;'>{title}</h1>"
-    for i, q in enumerate(quiz_buffer[uid]):
-        html_content += f"<h3>Q{i+1}. {q.get('question', '')}</h3>"
-        for opt in q.get('option', []):
-            html_content += f"<div>- {opt}</div>"
-        html_content += f"<br><b>Answer:</b> {q.get('answer', '')}<br>"
-        html_content += f"<b>Solution:</b> {q.get('solution', '')}<hr>"
+    msg = bot.reply_to(m, "📝 <b>कृपया अपना मैसेज या Photo (कैप्शन के साथ) भेजें:</b>\n"
+                          "👉 <i>(इसे कैंसिल करने के लिए /cancel टाइप करें)</i>", parse_mode='HTML')
+    bot.register_next_step_handler(msg, process_html_notes)
 
-    pdf_path = f"{title.replace(' ', '_')}.pdf"
-    if create_pdf_from_html_string(html_content, pdf_path):
-        with open(pdf_path, 'rb') as pdf_file:
-            bot.send_document(m.chat.id, pdf_file, caption=f"✅ {title} PDF तैयार है!")
-        os.remove(pdf_path)
-    else:
-        bot.reply_to(m, "❌ PDF जनरेट करने में त्रुटि।")
+def process_html_notes(m):
+    if m.chat.type != 'private': return
+    uid = m.from_user.id
+    
+    if m.content_type == 'text' and m.text.strip() == '/cancel':
+        return bot.reply_to(m, "✅ नोट्स भेजना कैंसिल कर दिया गया है।")
+        
+    notes_content = m.text if m.text else m.caption
+    
+    if not notes_content:
+        msg = bot.reply_to(m, "❌ कोई टेक्स्ट या कैप्शन नहीं मिला। कृपया अपना मैसेज दोबारा भेजें या /cancel दबाएं:")
+        return bot.register_next_step_handler(msg, process_html_notes)
+    
+    notes_content = notes_content.replace('<h1>', '<b>').replace('</h1>', '</b>')
+    temp_broadcast[uid] = {'msg': m, 'content': notes_content}
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Send to All", callback_data="send_notes_confirm"),
+        InlineKeyboardButton("❌ Cancel", callback_data="send_notes_cancel")
+    )
+    
+    bot.reply_to(m, "👀 <b>संदेश प्राप्त हुआ!</b>\nक्या आप इसे सभी चैनल्स पर पब्लिश करना चाहते हैं?", reply_markup=markup, parse_mode='HTML')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('send_notes_'))
+def handle_notes_confirmation(call):
+    uid = call.from_user.id
+    if call.data == 'send_notes_cancel':
+        bot.edit_message_text("✅ ब्रॉडकास्ट कैंसिल कर दिया गया है।", call.message.chat.id, call.message.message_id)
+        if uid in temp_broadcast: del temp_broadcast[uid]
+        return
+        
+    if call.data == 'send_notes_confirm':
+        if uid not in temp_broadcast:
+            return bot.answer_callback_query(call.id, "❌ डेटा एक्सपायर हो गया। दोबारा /send_notes करें।", show_alert=True)
+            
+        data = temp_broadcast[uid]
+        m = data['msg']
+        notes_content = data['content']
+        
+        bot.edit_message_text("🚀 संदेश चैनल्स पर भेजा जा रहा है...", call.message.chat.id, call.message.message_id)
+        
+        success_count = 0
+        for key, ch_info in CHANNELS.items():
+            target = ch_info['id']
+            try:
+                if m.content_type == 'photo':
+                    bot.send_photo(target, m.photo[-1].file_id, caption=notes_content, parse_mode='HTML')
+                else:
+                    bot.send_message(target, notes_content, parse_mode='HTML')
+                success_count += 1
+                time.sleep(0.5)
+            except Exception as e:
+                bot.send_message(uid, f"❌ Error on {ch_info['name']}: {e}")
+                    
+        bot.send_message(uid, f"✅ सफलता पूर्वक {success_count} चैनल्स पर पब्लिश कर दिया गया!")
+        del temp_broadcast[uid]
 
 # ==========================================
 # 🧩 ROBUST JSON & TEXT HANDLER
 # ==========================================
 
 def clean_json_string(text):
-    # Removes markdown like ```json ... ``` often produced by LLMs
     text = re.sub(r'^```(?:json)?', '', text, flags=re.MULTILINE)
     text = re.sub(r'```$', '', text, flags=re.MULTILINE)
     return text.strip()
@@ -227,7 +192,6 @@ def handle_text(m):
 
     cleaned_text = clean_json_string(text)
 
-    # 🆕 Robust JSON Builder
     if cleaned_text.startswith('[') or uid in json_fragments:
         if uid not in json_fragments:
             json_fragments[uid] = cleaned_text
