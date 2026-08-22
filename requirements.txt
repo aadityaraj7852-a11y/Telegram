@@ -1,5 +1,0 @@
-pyTelegramBotAPI
-flask
-weasyprint
-jinja2
-requests
