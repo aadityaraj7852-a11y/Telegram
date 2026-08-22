@@ -1,9 +1,3 @@
-"""
-main.py
-Bot ka entry point. Render pe isko "worker" ya "background worker"
-service ke roop me run karo (python main.py).
-"""
-
 import logging
 
 from telegram import Update
