@@ -6,9 +6,9 @@ service ke roop me run karo (python main.py).
 
 import logging
 import asyncio
-import threading  # <-- Naya import dummy server ke liye
-import os         # <-- Naya import port detect karne ke liye
-from http.server import BaseHTTPRequestHandler, HTTPServer # <-- Dummy server banane ke liye
+import threading
+import os
+from flask import Flask  # <-- Flask import for dummy server
 
 from telegram import Update
 from telegram.ext import (
@@ -28,23 +28,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # ==========================================
-# 🌐 DUMMY WEB SERVER (RENDER KO SATISFY KARNE KE LIYE)
+# 🌐 FLASK DUMMY SERVER (Render Port Issue Fix)
 # ==========================================
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b"Telegram Bot is running smoothly!")
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Telegram Bot is running smoothly on Render!"
 
 def run_dummy_server():
-    # Render khud ek PORT environment variable deta hai
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), DummyHandler)
-    logger.info(f"Dummy Web Server started on port {port}")
-    server.serve_forever()
+    print(f"Starting Flask server on port {port}", flush=True)
+    
+    # Disable Flask logs so it doesn't spam your Render logs
+    import logging as flask_logging
+    log = flask_logging.getLogger('werkzeug')
+    log.setLevel(flask_logging.ERROR)
+    
+    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 # ==========================================
+
 
 async def track_group_membership(update: Update, context):
     """Jab bot kisi group me add ho ya group ka title change ho"""
@@ -64,7 +69,7 @@ def build_app():
 
     app = Application.builder().token(config.BOT_TOKEN).build()
 
-    # ---- Activity tracking (runs first, non-blocking group) ----
+    # ---- Activity tracking ----
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, track_user_activity), group=-1)
     app.add_handler(ChatMemberHandler(track_group_membership, ChatMemberHandler.MY_CHAT_MEMBER), group=-1)
 
@@ -82,17 +87,17 @@ def build_app():
     app.add_handler(CommandHandler("withdraw", uh.withdraw_cmd))
     app.add_handler(CommandHandler("subjects", uh.subjects_cmd))
 
-    # ---- Quiz selection callbacks ----
+    # ---- Quiz callbacks ----
     app.add_handler(CallbackQueryHandler(uh.subject_selected, pattern=r"^qsubj_"))
     app.add_handler(CallbackQueryHandler(uh.chapter_selected, pattern=r"^qchap_"))
     app.add_handler(CallbackQueryHandler(uh.all_chapters_selected, pattern=r"^qallchap_"))
     app.add_handler(CallbackQueryHandler(uh.length_selected, pattern=r"^qlen_"))
     app.add_handler(CallbackQueryHandler(uh.subject_length_selected, pattern=r"^qslen_"))
 
-    # ---- Poll answers (core quiz scoring) ----
+    # ---- Poll answers ----
     app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
 
-    # ---- Admin: manual add question (conversation) ----
+    # ---- Admin: manual add question ----
     addq_conv = ConversationHandler(
         entry_points=[CommandHandler("addquestion", ah.addquestion_start)],
         states={
@@ -107,7 +112,7 @@ def build_app():
     )
     app.add_handler(addq_conv)
 
-    # ---- Admin: post ad (conversation) ----
+    # ---- Admin: post ad ----
     ad_conv = ConversationHandler(
         entry_points=[CommandHandler("postad", ah.postad_start)],
         states={
@@ -118,22 +123,17 @@ def build_app():
     )
     app.add_handler(ad_conv)
 
-    # ---- Admin: word file upload / export / sample ----
+    # ---- Admin: file upload & management ----
     app.add_handler(CommandHandler("uploadword", ah.uploadword_prompt))
     app.add_handler(CommandHandler("samplefile", ah.samplefile_cmd))
     app.add_handler(CommandHandler("exportquestions", ah.exportquestions_cmd))
     app.add_handler(CommandHandler("deletequestion", ah.deletequestion_cmd))
-
-    # Document handler: routes to either question-import or db-restore based on filename/reply
     app.add_handler(MessageHandler(filters.Document.FileExtension("docx"), ah.handle_docx_upload))
     app.add_handler(MessageHandler(filters.Document.FileExtension("db"), ah.handle_db_restore_upload))
 
-    # ---- Admin management ----
     app.add_handler(CommandHandler("addadmin", ah.addadmin_cmd))
     app.add_handler(CommandHandler("removeadmin", ah.removeadmin_cmd))
     app.add_handler(CommandHandler("listadmins", ah.listadmins_cmd))
-
-    # ---- Broadcast / backup / stats ----
     app.add_handler(CommandHandler("broadcast", ah.broadcast_cmd))
     app.add_handler(CommandHandler("backup", ah.backup_cmd))
     app.add_handler(CommandHandler("restore", ah.restore_cmd))
@@ -143,8 +143,6 @@ def build_app():
     app.add_handler(CommandHandler("unban", ah.unban_cmd))
     app.add_handler(CommandHandler("withdrawals", ah.withdrawals_cmd))
     app.add_handler(CommandHandler("setcoinrate", ah.setcoinrate_cmd))
-
-    # ---- Withdrawal approve/reject callback ----
     app.add_handler(CallbackQueryHandler(ah.withdrawal_action, pattern=r"^w(approve|reject)_"))
 
     return app
@@ -153,17 +151,19 @@ def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable set nahi hai! .env file check karo.")
 
-    # 1. Background mein dummy server chalu karo
-    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # 1. Flask server ko background thread mein chalu karein
+    t = threading.Thread(target=run_dummy_server)
+    t.daemon = True
+    t.start()
 
     app = build_app()
     logger.info("Bot start ho raha hai...")
     
-    # 2. Python 3.14 Event Loop ka fix
+    # 2. Python 3.14 Event Loop Issue Fix
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    # 3. Bot ki polling chalu karo
+    # 3. Bot Polling Start
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
