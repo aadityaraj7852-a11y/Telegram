@@ -5,7 +5,10 @@ service ke roop me run karo (python main.py).
 """
 
 import logging
-import asyncio  # <-- Naya import joda gaya hai event loop fix ke liye
+import asyncio
+import threading  # <-- Naya import dummy server ke liye
+import os         # <-- Naya import port detect karne ke liye
+from http.server import BaseHTTPRequestHandler, HTTPServer # <-- Dummy server banane ke liye
 
 from telegram import Update
 from telegram.ext import (
@@ -25,6 +28,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ==========================================
+# 🌐 DUMMY WEB SERVER (RENDER KO SATISFY KARNE KE LIYE)
+# ==========================================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Telegram Bot is running smoothly!")
+
+def run_dummy_server():
+    # Render khud ek PORT environment variable deta hai
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    logger.info(f"Dummy Web Server started on port {port}")
+    server.serve_forever()
+# ==========================================
 
 async def track_group_membership(update: Update, context):
     """Jab bot kisi group me add ho ya group ka title change ho"""
@@ -32,14 +52,12 @@ async def track_group_membership(update: Update, context):
     if chat.type in ("group", "supergroup"):
         db.upsert_group(chat.id, chat.title)
 
-
 async def track_user_activity(update: Update, context):
     """Har message pe user ko 'online'/'last seen' mark karo"""
     if update.effective_user:
         user = update.effective_user
         db.upsert_user(user.id, user.username, user.first_name)
         db.touch_online(user.id)
-
 
 def build_app():
     db.init_db()
@@ -131,21 +149,22 @@ def build_app():
 
     return app
 
-
 def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable set nahi hai! .env file check karo.")
 
+    # 1. Background mein dummy server chalu karo
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = build_app()
     logger.info("Bot start ho raha hai...")
     
-    # --- Fix for Python 3.14 Event Loop Error ---
+    # 2. Python 3.14 Event Loop ka fix
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    # --------------------------------------------
     
+    # 3. Bot ki polling chalu karo
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == "__main__":
     main()
