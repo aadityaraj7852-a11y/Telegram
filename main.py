@@ -1,14 +1,14 @@
 """
 main.py
-Bot ka entry point. Render pe isko "worker" ya "background worker"
-service ke roop me run karo (python main.py).
+Bot ka entry point. Render pe isko "Web Service" ki tarah run karne ke liye 
+ek Dummy Server lagaya gaya hai taki Port Timeout error na aaye.
 """
 
 import logging
 import asyncio
 import threading
 import os
-from flask import Flask  # <-- Flask import for dummy server
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.ext import (
@@ -30,24 +30,23 @@ logger = logging.getLogger(__name__)
 
 
 # ==========================================
-# 🌐 FLASK DUMMY SERVER (Render Port Issue Fix)
+# 🌐 DUMMY WEB SERVER (Render Port Timeout Fix)
 # ==========================================
-web_app = Flask(__name__)
-
-@web_app.route('/')
-def home():
-    return "Telegram Bot is running smoothly on Render!"
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Telegram Bot is Running Perfectly on Render!")
+        
+    def log_message(self, format, *args):
+        pass  # Server ke faltu logs ko band karne ke liye
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
-    print(f"Starting Flask server on port {port}", flush=True)
-    
-    # Disable Flask logs so it doesn't spam your Render logs
-    import logging as flask_logging
-    log = flask_logging.getLogger('werkzeug')
-    log.setLevel(flask_logging.ERROR)
-    
-    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    print(f"✅ Dummy Web Server started on Port {port} (Render is happy!)", flush=True)
+    server.serve_forever()
 # ==========================================
 
 
@@ -151,10 +150,10 @@ def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable set nahi hai! .env file check karo.")
 
-    # 1. Flask server ko background thread mein chalu karein
-    t = threading.Thread(target=run_dummy_server)
-    t.daemon = True
-    t.start()
+    # 1. Sabsay pehle Dummy Server chalu karo taki Render ka port scan pass ho jaye
+    server_thread = threading.Thread(target=run_dummy_server)
+    server_thread.daemon = True
+    server_thread.start()
 
     app = build_app()
     logger.info("Bot start ho raha hai...")
