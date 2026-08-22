@@ -1,0 +1,20 @@
+services:
+  - type: worker
+    name: telegram-quiz-bot
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: COIN_PER_CORRECT
+        value: "10"
+      - key: SPEED_BONUS
+        value: "5"
+      - key: QUESTION_TIME
+        value: "20"
