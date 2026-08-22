@@ -1,4 +1,11 @@
+"""
+main.py
+Bot ka entry point. Render pe isko "worker" ya "background worker"
+service ke roop me run karo (python main.py).
+"""
+
 import logging
+import asyncio  # <-- Naya import joda gaya hai event loop fix ke liye
 
 from telegram import Update
 from telegram.ext import (
@@ -131,6 +138,12 @@ def main():
 
     app = build_app()
     logger.info("Bot start ho raha hai...")
+    
+    # --- Fix for Python 3.14 Event Loop Error ---
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # --------------------------------------------
+    
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
