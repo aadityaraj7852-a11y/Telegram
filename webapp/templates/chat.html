@@ -231,15 +231,8 @@ function scrollToBottom() {
 }
 
 async function fetchMe() {
-  try {
-    const res = await fetch('/api/me?token=' + encodeURIComponent(TOKEN));
-    if (!res.ok) throw new Error('auth failed');
-    const data = await res.json();
-    myUserId = data.user_id;
-    subtitleEl.textContent = MY_NAME + ' ke roop me online';
-  } catch (e) {
-    subtitleEl.textContent = 'Connection error — link expire ho sakta hai';
-  }
+  // Direct display_name use karenge taaki API fail hone par bhi chat box na ruke
+  subtitleEl.textContent = MY_NAME + ' ke roop me online';
 }
 
 async function pollMessages() {
