@@ -739,62 +739,7 @@ async def handle_pdf_clean_upload(update: Update, context: ContextTypes.DEFAULT_
         if os.path.exists(p):
             os.remove(p)
 
-
-# ---------------- HASHTAG OPTIMIZER (for the bot's own posts/ads) ----------------
-
-_HASHTAG_BANK = {
-    "quiz": ["#Quiz", "#QuizTime", "#OnlineQuiz", "#TestYourself", "#QuizChallenge"],
-    "study": ["#StudyMaterial", "#Students", "#Learning", "#ExamPrep", "#StudyGroup"],
-    "coins": ["#Rewards", "#EarnWhileYouLearn", "#WinCoins"],
-    "general": ["#Education", "#KnowledgeIsPower", "#DailyQuiz", "#Competition"],
-}
-
-
-def _suggest_hashtags(topic_text, max_tags=8):
-    topic_text = topic_text.lower()
-    tags = []
-    if any(k in topic_text for k in ["quiz", "test", "exam"]):
-        tags += _HASHTAG_BANK["quiz"]
-    if any(k in topic_text for k in ["study", "notes", "chapter", "subject", "student"]):
-        tags += _HASHTAG_BANK["study"]
-    if any(k in topic_text for k in ["coin", "reward", "win", "earn"]):
-        tags += _HASHTAG_BANK["coins"]
-    tags += _HASHTAG_BANK["general"]
-
-    # word-based tags from the topic itself
-    words = re.findall(r"[a-zA-Z]{4,}", topic_text)
-    for w in words[:5]:
-        tag = f"#{w.capitalize()}"
-        if tag not in tags:
-            tags.append(tag)
-
-    # de-dup, preserve order, cap
-    seen = set()
-    result = []
-    for t in tags:
-        if t.lower() not in seen:
-            seen.add(t.lower())
-            result.append(t)
-    return result[:max_tags]
-
-
-async def hashtags_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/hashtags <apna post ka text ya topic> — bot ke apne posts/ads ke liye
-    relevant hashtags suggest karta hai (koi external scraping nahi karta)."""
-    if not await require_admin(update):
-        return
-    topic = update.message.text.partition(" ")[2].strip()
-    if not topic:
-        await update.message.reply_text("Usage: /hashtags <apne post ka topic ya text>\nExample: /hashtags Physics chapter quiz coins jeetiye")
-        return
-
-    tags = _suggest_hashtags(topic)
-    await update.message.reply_text(
-        "🏷 *Suggested Hashtags:*\n\n" + " ".join(tags) +
-        "\n\nApne ad/post ke end me copy-paste kar sakte ho.",
-        parse_mode="Markdown"
-    )
-
+# HASHTAGS FUNCTION HATA DIYA GAYA HAI YAHAN SE
 
 # ---------------- NOTE: send-to-group callback ----------------
 
