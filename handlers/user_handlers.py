@@ -37,11 +37,13 @@ def main_menu_keyboard(user_id):
          InlineKeyboardButton("🪙 Wallet", callback_data="menu_wallet")],
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
-        # Yahan par Students Lounge ki jagah naye Social Links add kiye gaye hain
-        [InlineKeyboardButton("💬 Discussion Group", url="https://t.me/your_group_link"),
+        
+        # Naye App aur Social Media Links yahan add kiye gaye hain
+        [InlineKeyboardButton("📱 Download App", url="https://play.google.com/store/apps/details?id=com.mockrise.learning")],
+        [InlineKeyboardButton("📺 Pratibimb Academy", url="https://youtube.com/@pratibimbacademy?si=cMNsJyyE2yHVS_YK"),
+         InlineKeyboardButton("📺 Mockrise YouTube", url="https://youtube.com/@mockrise?si=q7YRnoKR0vTVAWX-")],
+        [InlineKeyboardButton("📸 Instagram Page", url="https://www.instagram.com/mockrise?stkn=MXExdnlleTg2dm1tdg=="),
          InlineKeyboardButton("📋 Discover", callback_data="menu_discover")],
-        [InlineKeyboardButton("📺 YouTube Channel", url="https://youtube.com/your_channel_link"),
-         InlineKeyboardButton("📸 Instagram Page", url="https://instagram.com/your_insta_link")],
     ]
     if is_admin(user_id):
         keyboard.append([InlineKeyboardButton("👑 Admin Panel", callback_data="menu_admin")])
@@ -58,15 +60,17 @@ def admin_menu_keyboard():
          InlineKeyboardButton("📋 List Groups", callback_data="amenu_listgroups")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="amenu_broadcast"),
          InlineKeyboardButton("📣 Post Ad", callback_data="amenu_postad")],
+         
+        # Yahan se Hashtags Ideas wala button hata diya gaya hai
         [InlineKeyboardButton("📝 Send Note", callback_data="amenu_sendnote"),
-         InlineKeyboardButton("🏷 Hashtag Ideas", callback_data="amenu_hashtags")],
-        [InlineKeyboardButton("💾 Backup", callback_data="amenu_backup"),
-         InlineKeyboardButton("📊 Stats", callback_data="amenu_stats")],
-        [InlineKeyboardButton("💰 Withdrawals", callback_data="amenu_withdrawals"),
-         InlineKeyboardButton("👮 Admins", callback_data="amenu_admins")],
-        [InlineKeyboardButton("😀 Reactions Bot", callback_data="amenu_reactions"),
-         InlineKeyboardButton("🚀 Visibility Booster", callback_data="amenu_boost")],
-        [InlineKeyboardButton("📋 Manage Directory", callback_data="amenu_directory")],
+         InlineKeyboardButton("💾 Backup", callback_data="amenu_backup")],
+         
+        [InlineKeyboardButton("📊 Stats", callback_data="amenu_stats"),
+         InlineKeyboardButton("💰 Withdrawals", callback_data="amenu_withdrawals")],
+        [InlineKeyboardButton("👮 Admins", callback_data="amenu_admins"),
+         InlineKeyboardButton("😀 Reactions Bot", callback_data="amenu_reactions")],
+        [InlineKeyboardButton("🚀 Visibility Booster", callback_data="amenu_boost"),
+         InlineKeyboardButton("📋 Manage Directory", callback_data="amenu_directory")],
         [InlineKeyboardButton("⬅️ Back", callback_data="menu_back")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -343,7 +347,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/sendnote — HTML note banao aur bhejo\n"
         "/pushnote <id> <chat_id> — Saved note kisi group me bhejo\n"
         "/notelist — Saare saved notes\n"
-        "/hashtags <topic> — Apne post ke liye hashtags\n"
         "/reactions — Reactions Bot status (is group me)\n"
         "/reactionson / /reactionsoff — Auto-react chalu/band\n"
         "/setreactionemojis 🔥 👍 — Reaction emojis set karo\n"
