@@ -80,7 +80,6 @@ async def admin_menu_router(update: Update, context):
         "amenu_broadcast": "📢 Sab users ko message bhejne ke liye likho:\n/broadcast <tumhara message>",
         "amenu_postad": "📣 Ad post karne ke liye likho:\n/postad",
         "amenu_sendnote": "📝 Naya HTML note banane ke liye likho:\n/sendnote",
-        "amenu_hashtags": "🏷 Hashtag suggestions ke liye likho:\n/hashtags <apna topic>",
         "amenu_backup": "💾 Database backup paane ke liye likho:\n/backup",
         "amenu_stats": "📊 Bot stats dekhne ke liye likho:\n/stats",
         "amenu_withdrawals": "💰 Pending withdrawals dekhne ke liye likho:\n/withdrawals",
@@ -218,9 +217,6 @@ def build_app():
     app.add_handler(CommandHandler("setgroupentryfee", ah.setgroupentryfee_cmd))
     app.add_handler(CommandHandler("addgroup", ah.addgroup_cmd))
     app.add_handler(CommandHandler("listgroups", ah.listgroups_cmd))
-
-    # ---- Hashtag optimizer (for the bot's own posts) ----
-    app.add_handler(CommandHandler("hashtags", ah.hashtags_cmd))
 
     # ---- Reactions Bot (auto-react on the bot's own posts) ----
     app.add_handler(CommandHandler("reactions", ah.reactions_cmd))
