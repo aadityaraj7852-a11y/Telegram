@@ -1,19 +1,10 @@
 """
 admin_handlers.py
-Admin/Owner ke liye commands:
-- Manual question add (conversation flow)
-- Word file upload se bulk import
-- Sample file / export question bank
-- Broadcast, ads post karna
-- Backup / restore
-- Stats, user info, ban/unban
-- Withdrawals approve/reject
-- Coin rate set karna
+Admin/Owner ke liye commands and UI flow.
 """
 
 import os
 import time
-import json
 import re
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,137 +12,117 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import database as db
 import config
-from utils.permissions import require_admin, require_owner, is_admin
+from utils.permissions import require_admin, require_owner, is_admin, is_owner
 from utils.docx_parser import parse_docx, validate_parsed
 from utils.exporters import make_sample_template, export_questions_to_docx
 from utils.pdf_cleaner import clean_pdf
-from utils.html_notes import sanitize_for_telegram, chunk_message, build_note_html_file
+from utils.html_notes import sanitize_for_telegram, chunk_message
 
-# Conversation states for manual add-question flow
+# Conversation states
 ASK_SUBJECT, ASK_CHAPTER, ASK_QUESTION, ASK_OPTIONS, ASK_ANSWER, ASK_EXPLANATION = range(6)
-
-# Conversation state for ads
 ASK_AD_CONTENT, ASK_AD_BUTTON = range(100, 102)
-
-# Conversation states for HTML note composing
 ASK_NOTE_TITLE, ASK_NOTE_CONTENT = range(200, 202)
-
-# Conversation states for /addgroup (register a group/channel with custom settings)
 ASK_GROUP_ID, ASK_GROUP_COINRATE, ASK_GROUP_NEGATIVE, ASK_GROUP_ENTRYFEE = range(300, 304)
+ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
+ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
+ASK_ADMIN_ID_ADD, ASK_ADMIN_ID_REMOVE, ASK_BROADCAST_MSG = range(700, 703)
+
+
+# --- Helper for Buttons & Commands ---
+async def check_admin(update: Update):
+    if update.callback_query:
+        if not is_admin(update.effective_user.id):
+            await update.callback_query.answer("⛔ Sirf Admin ke liye.", show_alert=True)
+            return False
+        return True
+    return await require_admin(update)
+
+async def check_owner(update: Update):
+    if update.callback_query:
+        if not is_owner(update.effective_user.id):
+            await update.callback_query.answer("⛔ Sirf Owner ke liye.", show_alert=True)
+            return False
+        return True
+    return await require_owner(update)
 
 
 # ---------------- MANUAL ADD QUESTION ----------------
-
 async def addquestion_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return ConversationHandler.END
-    await update.message.reply_text("📚 Subject ka naam likho (jaise: Physics):")
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📚 Subject ka naam likho (jaise: Physics):\n(Cancel ke liye /cancel)")
     return ASK_SUBJECT
-
 
 async def addquestion_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_q_subject"] = update.message.text.strip()
-    await update.message.reply_text("📑 Chapter ka naam likho (jaise: Motion):")
+    await update.effective_message.reply_text("📑 Chapter ka naam likho (jaise: Motion):")
     return ASK_CHAPTER
-
 
 async def addquestion_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_q_chapter"] = update.message.text.strip()
-    await update.message.reply_text("❓ Ab question likho:")
+    await update.effective_message.reply_text("❓ Ab question likho:")
     return ASK_QUESTION
-
 
 async def addquestion_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_q_text"] = update.message.text.strip()
-    await update.message.reply_text(
-        "🔤 Options likho, ek line me ek option "
-        "(kam se kam 2, max 4). Jab sab options ho jaye to /done likhna.\n\n"
-        "Example:\nKg\nm/s\nNewton\nWatt"
-    )
+    await update.effective_message.reply_text("🔤 Options likho, ek line me ek option.\nJab sab ho jaye to /done likhna.")
     context.user_data["new_q_options"] = []
     return ASK_OPTIONS
-
 
 async def addquestion_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == "/done":
         opts = context.user_data.get("new_q_options", [])
         if len(opts) < 2:
-            await update.message.reply_text("Kam se kam 2 options chahiye. Aur options bhejo:")
+            await update.effective_message.reply_text("Kam se kam 2 options chahiye. Aur options bhejo:")
             return ASK_OPTIONS
         letters = ", ".join(f"{chr(65+i)}) {o}" for i, o in enumerate(opts))
-        await update.message.reply_text(f"✅ Options: {letters}\n\nAb sahi answer ka letter likho (A/B/C/D):")
+        await update.effective_message.reply_text(f"✅ Options: {letters}\n\nAb sahi answer ka letter likho (A/B/C/D):")
         return ASK_ANSWER
-
     context.user_data["new_q_options"].append(text)
-    await update.message.reply_text(f"✅ Add hua: {text}\nAur option bhejo ya /done likho.")
+    await update.effective_message.reply_text(f"✅ Add hua: {text}\nAur option bhejo ya /done likho.")
     return ASK_OPTIONS
-
 
 async def addquestion_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     letter = update.message.text.strip().upper()
     opts = context.user_data.get("new_q_options", [])
     if letter not in [chr(65+i) for i in range(len(opts))]:
-        await update.message.reply_text(f"⚠️ Sirf {', '.join(chr(65+i) for i in range(len(opts)))} me se ek likho:")
+        await update.effective_message.reply_text("⚠️ Sahi letter likho:")
         return ASK_ANSWER
-
     context.user_data["new_q_correct"] = ord(letter) - ord('A')
-    await update.message.reply_text("💡 Explanation likho (optional, skip karne ke liye /skip likho):")
+    await update.effective_message.reply_text("💡 Explanation likho (optional, skip ke liye /skip likho):")
     return ASK_EXPLANATION
-
 
 async def addquestion_explanation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     explanation = "" if text == "/skip" else text
-
-    subject = context.user_data["new_q_subject"]
-    chapter = context.user_data["new_q_chapter"]
-    q_text = context.user_data["new_q_text"]
-    opts = context.user_data["new_q_options"]
-    correct = context.user_data["new_q_correct"]
-
-    chapter_id = db.find_or_create_chapter(subject, chapter)
-    qid = db.add_question(chapter_id, q_text, opts, correct, explanation, update.effective_user.id)
-
-    await update.message.reply_text(
-        f"✅ Question add ho gaya! (ID #{qid})\n📚 {subject} → {chapter}\n\n"
-        f"Aur question add karne ke liye /addquestion likho."
-    )
+    chapter_id = db.find_or_create_chapter(context.user_data["new_q_subject"], context.user_data["new_q_chapter"])
+    qid = db.add_question(chapter_id, context.user_data["new_q_text"], context.user_data["new_q_options"], 
+                          context.user_data["new_q_correct"], explanation, update.effective_user.id)
+    await update.effective_message.reply_text(f"✅ Question add ho gaya! (ID #{qid})\nMenu ke liye /menu dabayein.")
     context.user_data.clear()
     return ConversationHandler.END
 
-
 async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("❌ Cancel ho gaya.")
+    await update.effective_message.reply_text("❌ Cancel ho gaya. Menu ke liye /menu dabayein.")
     return ConversationHandler.END
 
 
 # ---------------- WORD FILE UPLOAD ----------------
-
 async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    await update.message.reply_text(
-        "📎 Word (.docx) file bhejo jisme questions likhe ho.\n"
-        "Format nahi pata? /samplefile likho, ek example file milegi."
-    )
-
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
+    await update.effective_message.reply_text("📎 Word (.docx) file bhejo jisme questions likhe ho.\nFormat nahi pata? /samplefile se template check karo.")
 
 async def handle_docx_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return  # silently ignore non-admin file uploads
-
+    if not is_admin(update.effective_user.id): return
     doc = update.message.document
-    if not doc.file_name.lower().endswith(".docx"):
-        return
-
+    if not doc.file_name.lower().endswith(".docx"): return
     await update.message.reply_text("⏳ File padh raha hoon...")
-
     file = await context.bot.get_file(doc.file_id)
     local_path = f"/tmp/{doc.file_unique_id}.docx"
     await file.download_to_drive(local_path)
-
     try:
         parsed = parse_docx(local_path)
         valid, errors = validate_parsed(parsed)
@@ -159,151 +130,166 @@ async def handle_docx_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"❌ File padhne me error: {e}")
         return
     finally:
-        if os.path.exists(local_path):
-            os.remove(local_path)
-
+        if os.path.exists(local_path): os.remove(local_path)
     if not valid:
-        err_text = "\n".join(errors[:10]) if errors else "Koi valid question nahi mila."
-        await update.message.reply_text(f"❌ Koi question add nahi hua.\n\n{err_text}")
+        await update.message.reply_text("❌ Koi question add nahi hua.")
         return
-
     added = 0
     for q in valid:
         chapter_id = db.find_or_create_chapter(q["subject"], q["chapter"])
-        db.add_question(chapter_id, q["question"], q["options"], q["correct_index"],
-                        q["explanation"], update.effective_user.id)
+        db.add_question(chapter_id, q["question"], q["options"], q["correct_index"], q["explanation"], update.effective_user.id)
         added += 1
-
-    msg = f"✅ {added} questions successfully add ho gaye!"
-    if errors:
-        msg += f"\n⚠️ {len(errors)} questions skip hue (format error):\n" + "\n".join(errors[:5])
-    await update.message.reply_text(msg)
-
+    await update.message.reply_text(f"✅ {added} questions successfully add ho gaye!")
 
 async def samplefile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
     path = make_sample_template()
-    await update.message.reply_document(document=open(path, "rb"),
-                                        caption="📄 Ye raha sample format. Isi tarah apni file banao.")
-
+    await update.effective_message.reply_document(document=open(path, "rb"), caption="📄 Ye raha sample format. Isi tarah apni file banao.")
 
 async def exportquestions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
     questions = db.get_questions()
     if not questions:
-        await update.message.reply_text("Question bank khali hai.")
+        await update.effective_message.reply_text("Question bank khali hai.")
         return
     path = export_questions_to_docx(questions)
-    await update.message.reply_document(document=open(path, "rb"),
-                                        caption=f"📦 Total {len(questions)} questions export kiye.")
-
+    await update.effective_message.reply_document(document=open(path, "rb"), caption=f"📦 Total {len(questions)} questions export kiye.")
 
 async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if not await check_admin(update): return
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /deletequestion <id>")
+        await update.effective_message.reply_text("Usage: /deletequestion <id>")
         return
     db.delete_question(int(context.args[0]))
-    await update.message.reply_text("✅ Question delete ho gaya.")
+    await update.effective_message.reply_text("✅ Question delete ho gaya.")
 
 
-# ---------------- ADMIN MANAGEMENT ----------------
+# ---------------- NEW ADMIN MANAGEMENT (UI BASED) ----------------
+async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Button click se sab admins ki list dikhata hai aur add/remove ke buttons deta hai"""
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
 
-async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_owner(update):
-        return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /addadmin <user_id>")
-        return
-    uid = int(context.args[0])
+    admins = db.list_admins()
+    text = "👮 *Admins List:*\n\n" + ("\n".join(f"• ID: `{a['user_id']}`" for a in admins) if admins else "Koi extra admin nahi hai.")
+    
+    keyboard = []
+    if is_owner(update.effective_user.id):
+        keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
+                         InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_owner(update): return ConversationHandler.END
+    await update.effective_message.reply_text(
+        "➕ Jis user ko admin banana hai, uska Telegram ID bhejo:\n\n"
+        "(ID pata karne ke liye us user se kaho bot me /start dabaye ya @userinfobot check kare)\n\n"
+        "(Cancel karne ke liye /cancel likho)"
+    )
+    return ASK_ADMIN_ID_ADD
+
+async def admin_add_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo ya /cancel likho:")
+        return ASK_ADMIN_ID_ADD
+    uid = int(text)
     db.add_admin(uid, update.effective_user.id)
-    await update.message.reply_text(f"✅ User {uid} ab admin hai.")
+    await update.message.reply_text(f"✅ User {uid} ab admin ban gaya hai!\n\nMenu me wapas jane ke liye /menu dabayein.")
+    return ConversationHandler.END
 
+async def admin_rem_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_owner(update): return ConversationHandler.END
+    await update.effective_message.reply_text("❌ Jisko admin se hatana hai, uska Telegram ID bhejo:\n\n(Cancel karne ke liye /cancel likho)")
+    return ASK_ADMIN_ID_REMOVE
+
+async def admin_rem_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo ya /cancel likho:")
+        return ASK_ADMIN_ID_REMOVE
+    uid = int(text)
+    db.remove_admin(uid)
+    await update.message.reply_text(f"✅ User {uid} ko admin se hata diya gaya hai.\n\nMenu me wapas jane ke liye /menu dabayein.")
+    return ConversationHandler.END
+
+# Old text commands for backup compatibility
+async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_owner(update): return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Usage: /addadmin <user_id>")
+        return
+    db.add_admin(int(context.args[0]), update.effective_user.id)
+    await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin hai.")
 
 async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_owner(update):
-        return
+    if not await check_owner(update): return
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /removeadmin <user_id>")
+        await update.effective_message.reply_text("Usage: /removeadmin <user_id>")
         return
-    uid = int(context.args[0])
-    db.remove_admin(uid)
-    await update.message.reply_text(f"✅ User {uid} ab admin nahi hai.")
-
+    db.remove_admin(int(context.args[0]))
+    await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin nahi hai.")
 
 async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    admins = db.list_admins()
-    text = "👮 *Admins:*\n" + "\n".join(f"• {a['user_id']}" for a in admins) if admins else "Koi extra admin nahi hai."
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await manage_admins_menu(update, context)
 
 
-# ---------------- BROADCAST ----------------
+# ---------------- BROADCAST (UI BASED) ----------------
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📢 Sab users ko jo message bhejna hai, wo yahan type karo:\n\n(Cancel karne ke liye /cancel likho)")
+    return ASK_BROADCAST_MSG
 
-async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    text = update.message.text.partition(" ")[2].strip()
-    if not text:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
-
+async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
     users = db.get_all_users()
     sent, failed = 0, 0
     status_msg = await update.message.reply_text(f"📢 Bhej raha hoon... 0/{len(users)}")
-
     for i, u in enumerate(users):
-        if u["is_banned"]:
-            continue
+        if u["is_banned"]: continue
         try:
             await context.bot.send_message(u["user_id"], f"📢 *Announcement*\n\n{text}", parse_mode="Markdown")
             sent += 1
         except Exception:
             failed += 1
         if i % 25 == 0:
-            try:
-                await status_msg.edit_text(f"📢 Bhej raha hoon... {i}/{len(users)}")
-            except Exception:
-                pass
-
+            try: await status_msg.edit_text(f"📢 Bhej raha hoon... {i}/{len(users)}")
+            except Exception: pass
     await status_msg.edit_text(f"✅ Broadcast complete!\nSent: {sent} | Failed: {failed}")
+    return ConversationHandler.END
 
 
 # ---------------- ADS ----------------
-
 async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return ConversationHandler.END
-    await update.message.reply_text("📝 Ad ka text/content likho:")
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📝 Ad ka text/content likho:\n(Cancel ke liye /cancel)")
     return ASK_AD_CONTENT
-
 
 async def postad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["ad_content"] = update.message.text
-    await update.message.reply_text(
-        "🔘 Button chahiye? Agar haan to 'Button Text | https://link.com' format me likho.\n"
-        "Nahi chahiye to /skip likho."
-    )
+    await update.effective_message.reply_text("🔘 Button chahiye? 'Button Text | https://link.com' format me likho.\nNahi chahiye to /skip likho.")
     return ASK_AD_BUTTON
-
 
 async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     button_text, button_url = None, None
     if text != "/skip" and "|" in text:
         button_text, button_url = [x.strip() for x in text.split("|", 1)]
-
     content = context.user_data.get("ad_content", "")
     ad_id = db.create_ad(content, button_text, button_url, update.effective_user.id)
-
-    reply_markup = None
-    if button_text and button_url:
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]])
-
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]]) if button_text else None
     groups = db.get_active_groups()
     sent = 0
     for g in groups:
@@ -313,51 +299,34 @@ async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
         except Exception:
             db.deactivate_group(g["chat_id"])
-
     db.increment_ad_sent(ad_id, sent)
-    await update.message.reply_text(f"✅ Ad {sent} groups/channels me bhej diya gaya.")
+    await update.effective_message.reply_text(f"✅ Ad {sent} groups/channels me bhej diya gaya.")
     context.user_data.clear()
     return ConversationHandler.END
 
 
 # ---------------- BACKUP / RESTORE ----------------
-
 async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
     from database import DB_PATH
     if not os.path.exists(DB_PATH):
-        await update.message.reply_text("Database file nahi mili.")
+        await update.effective_message.reply_text("Database file nahi mili.")
         return
-    await update.message.reply_document(
-        document=open(DB_PATH, "rb"),
-        filename=f"quizbot_backup_{int(time.time())}.db",
-        caption="💾 Ye raha database backup. Isse restore karne ke liye /restore reply karke ye file bhejo."
-    )
-
+    await update.effective_message.reply_document(document=open(DB_PATH, "rb"), filename=f"quizbot_backup_{int(time.time())}.db", caption="💾 Ye raha database backup.")
 
 async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_owner(update):
-        return
-    await update.message.reply_text(
-        "⚠️ Restore karne ke liye backup (.db) file is message ko *reply* karke bhejo.",
-        parse_mode="Markdown"
-    )
-
+    if not await check_owner(update): return
+    await update.effective_message.reply_text("⚠️ Restore karne ke liye backup (.db) file is message ko *reply* karke bhejo.", parse_mode="Markdown")
 
 async def handle_db_restore_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not update.message.reply_to_message:
-        return
-    if "restore" not in (update.message.reply_to_message.text or "").lower():
-        return
-
+    if not is_admin(update.effective_user.id): return
+    if not update.message.reply_to_message: return
+    if "restore" not in (update.message.reply_to_message.text or "").lower(): return
     doc = update.message.document
     if not doc.file_name.endswith(".db"):
         await update.message.reply_text("❌ Sirf .db backup file valid hai.")
         return
-
     from database import DB_PATH
     file = await context.bot.get_file(doc.file_id)
     await file.download_to_drive(DB_PATH)
@@ -365,666 +334,320 @@ async def handle_db_restore_upload(update: Update, context: ContextTypes.DEFAULT
 
 
 # ---------------- STATS / USER INFO ----------------
-
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
     users = db.get_all_users()
-    total_users = len(users)
-    total_coins = sum(u["coins"] for u in users)
-    total_q = db.count_questions()
-    groups = db.get_active_groups()
-
-    text = (
-        f"📊 *Bot Stats*\n\n"
-        f"👥 Total Users: {total_users}\n"
-        f"🪙 Total Coins in circulation: {total_coins}\n"
-        f"❓ Total Questions in bank: {total_q}\n"
-        f"👨‍👩‍👧 Active Groups: {len(groups)}\n"
-        f"📚 Total Subjects: {len(db.get_subjects())}\n"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
+    text = (f"📊 *Bot Stats*\n\n👥 Total Users: {len(users)}\n"
+            f"🪙 Coins: {sum(u['coins'] for u in users)}\n"
+            f"❓ Questions: {db.count_questions()}\n"
+            f"👨‍👩‍👧 Active Groups: {len(db.get_active_groups())}\n")
+    await update.effective_message.reply_text(text, parse_mode="Markdown")
 
 async def userinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if not await check_admin(update): return
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /userinfo <user_id>")
+        await update.effective_message.reply_text("Usage: /userinfo <user_id>")
         return
-
-    uid = int(context.args[0])
-    u = db.get_user(uid)
+    u = db.get_user(int(context.args[0]))
     if not u:
-        await update.message.reply_text("User nahi mila.")
+        await update.effective_message.reply_text("User nahi mila.")
         return
-
-    joined = time.strftime("%d-%b-%Y %H:%M", time.localtime(u["joined_at"]))
-    last_online = time.strftime("%d-%b-%Y %H:%M", time.localtime(u["last_online"]))
-
-    text = (
-        f"👤 *User Info*\n\n"
-        f"ID: {u['user_id']}\n"
-        f"Name: {u['first_name']} (@{u['username']})\n"
-        f"Joined (bot on kiya): {joined}\n"
-        f"Last online: {last_online}\n"
-        f"Coins: {u['coins']}\n"
-        f"Total Quizzes: {u['total_quizzes']}\n"
-        f"Correct/Wrong: {u['total_correct']}/{u['total_wrong']}\n"
-        f"Banned: {'Haan' if u['is_banned'] else 'Nahi'}\n"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
+    text = f"👤 *User Info*\n\nID: {u['user_id']}\nName: {u['first_name']}\nCoins: {u['coins']}\nQuizzes: {u['total_quizzes']}"
+    await update.effective_message.reply_text(text, parse_mode="Markdown")
 
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /ban <user_id>")
-        return
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
     db.set_ban(int(context.args[0]), True)
-    await update.message.reply_text("✅ User ban ho gaya.")
-
+    await update.effective_message.reply_text("✅ User ban ho gaya.")
 
 async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /unban <user_id>")
-        return
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
     db.set_ban(int(context.args[0]), False)
-    await update.message.reply_text("✅ User unban ho gaya.")
+    await update.effective_message.reply_text("✅ User unban ho gaya.")
 
 
 # ---------------- WITHDRAWALS ----------------
-
 async def withdrawals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
     pending = db.get_pending_withdrawals()
     if not pending:
-        await update.message.reply_text("Koi pending withdrawal nahi hai.")
+        await update.effective_message.reply_text("Koi pending withdrawal nahi hai.")
         return
-
     for w in pending:
-        text = (
-            f"💰 Withdrawal #{w['id']}\n"
-            f"User: {w['first_name']} (@{w['username']}) | ID: {w['user_id']}\n"
-            f"Coins: {w['coins']}"
-        )
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Approve", callback_data=f"wapprove_{w['id']}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"wreject_{w['id']}_{w['user_id']}_{w['coins']}"),
-        ]])
-        await update.message.reply_text(text, reply_markup=keyboard)
-
+        text = f"💰 Withdrawal #{w['id']}\nUser: {w['first_name']} | ID: {w['user_id']}\nCoins: {w['coins']}"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Approve", callback_data=f"wapprove_{w['id']}"), InlineKeyboardButton("❌ Reject", callback_data=f"wreject_{w['id']}_{w['user_id']}_{w['coins']}") ]])
+        await update.effective_message.reply_text(text, reply_markup=keyboard)
 
 async def withdrawal_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if not is_admin(query.from_user.id):
-        await query.answer("Sirf admin ye kar sakte hain.", show_alert=True)
-        return
-
+    if not is_admin(query.from_user.id): return
     data = query.data
     if data.startswith("wapprove_"):
-        wid = int(data.split("_")[1])
-        db.process_withdrawal(wid, "approved", query.from_user.id)
+        db.process_withdrawal(int(data.split("_")[1]), "approved", query.from_user.id)
         await query.edit_message_text(query.message.text + "\n\n✅ APPROVED")
     elif data.startswith("wreject_"):
         _, wid, user_id, coins = data.split("_")
         db.process_withdrawal(int(wid), "rejected", query.from_user.id)
-        db.add_coins(int(user_id), int(coins))  # refund
-        await query.edit_message_text(query.message.text + "\n\n❌ REJECTED (coins refund ho gaye)")
+        db.add_coins(int(user_id), int(coins))
+        await query.edit_message_text(query.message.text + "\n\n❌ REJECTED (coins refund)")
 
 
 # ---------------- SETTINGS ----------------
-
 async def setcoinrate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Global default coin rate — owner hi change kar sakta hai."""
-    if not await require_owner(update):
-        return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /setcoinrate <amount>")
-        return
+    if not await check_owner(update): return
+    if not context.args or not context.args[0].isdigit(): return
     new_rate = int(context.args[0])
     db.set_setting("coin_per_correct", new_rate)
-    config.COIN_PER_CORRECT = new_rate  # turant apply, restart ki zaroorat nahi
-    await update.message.reply_text(f"✅ Global coin rate ab {new_rate} coins/correct answer hai.")
+    config.COIN_PER_CORRECT = new_rate
+    await update.effective_message.reply_text(f"✅ Global coin rate ab {new_rate} coins/correct answer hai.")
 
 
 # ---------------- PER-GROUP SETTINGS ----------------
-# Har group/channel apna alag coin rate, negative marking, entry fee rakh
-# sakta hai. Owner/admin group me command chalayega, ya /addgroup se
-# kisi bhi group_id ko remote se register kar sakta hai.
-
 async def groupsettings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Is command ko us group/channel me chalao jiske settings badalni hain."""
-    if not await require_admin(update):
-        return
-
+    if not await check_admin(update): return
     chat = update.effective_chat
     if chat.type not in ("group", "supergroup", "channel"):
-        await update.message.reply_text(
-            "⚠️ Ye command us group/channel me chalao jiske settings set karni hain.\n"
-            "Kisi doosre group ko duur se set karne ke liye /addgroup use karo."
-        )
+        await update.effective_message.reply_text("⚠️ Ye command us group me chalao jiske settings set karni hain.")
         return
-
     db.upsert_group(chat.id, chat.title)
     gs = db.get_group_settings(chat.id)
-    coin_rate = gs["coin_per_correct"] if gs and gs["coin_per_correct"] is not None else config.COIN_PER_CORRECT
-    negative = bool(gs["negative_marking"]) if gs else False
-    neg_amt = gs["negative_amount"] if gs and gs["negative_amount"] is not None else config.COIN_PER_CORRECT // 2
-    entry_fee = gs["entry_fee"] if gs else 0
-
-    text = (
-        f"⚙️ *Group Settings — {chat.title}*\n\n"
-        f"🪙 Coin per correct: {coin_rate}\n"
-        f"⚠️ Negative marking: {'ON (-' + str(neg_amt) + ')' if negative else 'OFF'}\n"
-        f"🎟 Entry fee: {entry_fee} coins\n\n"
-        f"Badalne ke liye:\n"
-        f"`/setgroupcoin <amount>`\n"
-        f"`/setgroupnegative on|off <amount>`\n"
-        f"`/setgroupentryfee <amount>`"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
+    text = (f"⚙️ *Group Settings — {chat.title}*\n\n"
+            f"🪙 Coin per correct: {gs['coin_per_correct'] if gs and gs['coin_per_correct'] else config.COIN_PER_CORRECT}\n"
+            f"Badalne ke liye:\n`/setgroupcoin <amount>`\n`/setgroupnegative on <amount>`")
+    await update.effective_message.reply_text(text, parse_mode="Markdown")
 
 async def setgroupcoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    chat = update.effective_chat
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /setgroupcoin <amount>")
-        return
-    db.upsert_group(chat.id, chat.title)
-    db.update_group_setting_field(chat.id, "coin_per_correct", int(context.args[0]))
-    await update.message.reply_text(f"✅ Is group ka coin rate ab {context.args[0]} hai.")
-
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
+    db.update_group_setting_field(update.effective_chat.id, "coin_per_correct", int(context.args[0]))
+    await update.effective_message.reply_text(f"✅ Is group ka coin rate ab {context.args[0]} hai.")
 
 async def setgroupnegative_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    chat = update.effective_chat
-    if not context.args or context.args[0].lower() not in ("on", "off"):
-        await update.message.reply_text("Usage: /setgroupnegative on <amount>  ya  /setgroupnegative off")
-        return
-
-    db.upsert_group(chat.id, chat.title)
-    is_on = context.args[0].lower() == "on"
-    db.update_group_setting_field(chat.id, "negative_marking", int(is_on))
-
-    if is_on:
-        amount = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else config.COIN_PER_CORRECT // 2
-        db.update_group_setting_field(chat.id, "negative_amount", amount)
-        await update.message.reply_text(f"✅ Negative marking ON — galat jawab pe -{amount} coins.")
-    else:
-        await update.message.reply_text("✅ Negative marking OFF kar diya.")
-
+    if not await check_admin(update): return
+    if not context.args or context.args[0].lower() not in ("on", "off"): return
+    db.update_group_setting_field(update.effective_chat.id, "negative_marking", int(context.args[0].lower() == "on"))
+    await update.effective_message.reply_text("✅ Negative marking updated.")
 
 async def setgroupentryfee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    chat = update.effective_chat
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /setgroupentryfee <amount>  (0 = entry fee band)")
-        return
-    db.upsert_group(chat.id, chat.title)
-    db.update_group_setting_field(chat.id, "entry_fee", int(context.args[0]))
-    await update.message.reply_text(f"✅ Entry fee ab {context.args[0]} coins hai.")
-
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
+    db.update_group_setting_field(update.effective_chat.id, "entry_fee", int(context.args[0]))
+    await update.effective_message.reply_text("✅ Entry fee updated.")
 
 async def addgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Owner/admin apna group/channel ID add kar sakta hai (remote registration),
-    taaki wahan ads/quiz bheje ja sakein bina waha jaake command chalaye."""
-    if not await require_admin(update):
-        return
-    if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
-            "Usage: /addgroup <chat_id> [title]\n\n"
-            "Chat ID pata karne ke liye bot ko us group me add karo aur /groupsettings chalao, "
-            "ya @userinfobot / @RawDataBot use karo."
-        )
-        return
-    try:
-        chat_id = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Chat ID number hona chahiye (jaise -1001234567890).")
-        return
-
-    title = " ".join(context.args[1:]) if len(context.args) > 1 else f"Group {chat_id}"
-    db.upsert_group(chat_id, title)
+    if not await check_admin(update): return
+    if not context.args or len(context.args) < 1: return
+    try: chat_id = int(context.args[0])
+    except ValueError: return
+    db.upsert_group(chat_id, f"Group {chat_id}")
     db.register_group_settings(chat_id, update.effective_user.id)
-    await update.message.reply_text(f"✅ '{title}' add ho gaya. Ab /groupsettings us group me ja kar customize karo.")
-
+    await update.effective_message.reply_text("✅ Group add ho gaya.")
 
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
     groups = db.get_active_groups()
-    if not groups:
-        await update.message.reply_text("Abhi koi group/channel registered nahi hai.")
-        return
-    lines = ["📋 *Registered Groups/Channels:*\n"]
-    for g in groups:
-        lines.append(f"• {g['title']} (`{g['chat_id']}`)")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    lines = ["📋 *Registered Groups:*\n"] + [f"• {g['title']} (`{g['chat_id']}`)" for g in groups]
+    await update.effective_message.reply_text("\n".join(lines) if groups else "Koi group nahi hai.", parse_mode="Markdown")
 
 
 # ---------------- HTML NOTES ----------------
-
 async def sendnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📝 Note ka title likho:"
-    )
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📝 Note ka title likho:\n(Cancel ke liye /cancel)")
     return ASK_NOTE_TITLE
-
 
 async def sendnote_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["note_title"] = update.message.text.strip()
-    await update.message.reply_text(
-        "✍️ Ab note ka content likho. HTML tags use kar sakte ho:\n"
-        "<b>bold</b>, <i>italic</i>, <u>underline</u>, <a href='...'>link</a>, "
-        "<code>code</code>, <pre>preformatted</pre>, <blockquote>quote</blockquote>"
-    )
+    await update.effective_message.reply_text("✍️ Ab HTML note ka content likho:")
     return ASK_NOTE_CONTENT
-
 
 async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = context.user_data.get("note_title", "Note")
-    content_html = update.message.text
-
-    note_id = db.save_note(title, content_html, update.effective_user.id)
-    clean_html = sanitize_for_telegram(content_html)
-    full_text = f"<b>{title}</b>\n\n{clean_html}"
-    chunks = chunk_message(full_text)
-
-    keyboard = [[InlineKeyboardButton("📤 Group/Channel me bhejo", callback_data=f"notesend_{note_id}")]]
-
-    for chunk in chunks:
-        try:
-            await update.message.reply_text(chunk, parse_mode="HTML")
-        except Exception:
-            # agar HTML invalid hua to plain text fallback
-            await update.message.reply_text(re.sub(r"<[^>]+>", "", chunk))
-
-    await update.message.reply_text(
-        "✅ Note ban gaya aur preview upar bhej diya. Kisi group/channel me bhejne ke liye "
-        f"`/pushnote {note_id} <chat_id>` likho.",
-        parse_mode="Markdown"
-    )
+    note_id = db.save_note(title, update.message.text, update.effective_user.id)
+    clean_html = sanitize_for_telegram(update.message.text)
+    for chunk in chunk_message(f"<b>{title}</b>\n\n{clean_html}"):
+        try: await update.effective_message.reply_text(chunk, parse_mode="HTML")
+        except: await update.effective_message.reply_text(re.sub(r"<[^>]+>", "", chunk))
+    await update.effective_message.reply_text(f"✅ Note ban gaya! Group me bhejne ke liye:\n`/pushnote {note_id} <chat_id>`", parse_mode="Markdown")
     context.user_data.clear()
     return ConversationHandler.END
 
-
 async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    if len(context.args) < 2 or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /pushnote <note_id> <chat_id>")
-        return
-
+    if not await check_admin(update): return
+    if len(context.args) < 2 or not context.args[0].isdigit(): return
     note = db.get_note(int(context.args[0]))
-    if not note:
-        await update.message.reply_text("❌ Note nahi mila.")
-        return
-    try:
-        chat_id = int(context.args[1])
-    except ValueError:
-        await update.message.reply_text("❌ chat_id number hona chahiye.")
-        return
-
+    if not note: return
+    try: chat_id = int(context.args[1])
+    except ValueError: return
     clean_html = sanitize_for_telegram(note["content_html"])
-    full_text = f"<b>{note['title']}</b>\n\n{clean_html}"
-    chunks = chunk_message(full_text)
-
     try:
-        last_msg = None
-        for chunk in chunks:
-            last_msg = await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
-        if last_msg:
-            await auto_react_to_bot_message(context, chat_id, last_msg.message_id)
-        await update.message.reply_text("✅ Note bhej diya gaya.")
+        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
+            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
+        await update.effective_message.reply_text("✅ Note bhej diya gaya.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Bhejne me error: {e}")
-
+        await update.effective_message.reply_text(f"❌ Error: {e}")
 
 async def notelist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if not await check_admin(update): return
     notes = db.get_notes()
-    if not notes:
-        await update.message.reply_text("Koi note nahi bana hai. /sendnote se banao.")
-        return
-    lines = ["📚 *Saved Notes:*\n"]
-    for n in notes:
-        lines.append(f"#{n['note_id']} — {n['title']}")
-    lines.append("\nBhejne ke liye: /pushnote <id> <chat_id>")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-
-# ---------------- PDF CLEANER (watermark + hyperlink remover) ----------------
-
-async def handle_pdf_clean_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Koi bhi user (admin ya normal) PDF bhej sakta hai clean karne ke liye."""
-    doc = update.message.document
-    if not doc.file_name.lower().endswith(".pdf"):
-        return
-
-    status = await update.message.reply_text("⏳ PDF clean kar raha hoon (watermark/link hata raha hoon)...")
-
-    file = await context.bot.get_file(doc.file_id)
-    in_path = f"/tmp/in_{doc.file_unique_id}.pdf"
-    out_path = f"/tmp/out_{doc.file_unique_id}.pdf"
-    await file.download_to_drive(in_path)
-
-    ok, msg = clean_pdf(in_path, out_path)
-
-    if not ok:
-        await status.edit_text(f"❌ Clean nahi ho paya: {msg}")
-    else:
-        db.log_pdf_job(update.effective_user.id, doc.file_name, "clean")
-        clean_name = f"cleaned_{doc.file_name}"
-        await update.message.reply_document(
-            document=open(out_path, "rb"),
-            filename=clean_name,
-            caption=f"✅ Clean ho gaya!\n{msg}"
-        )
-        await status.delete()
-
-    for p in (in_path, out_path):
-        if os.path.exists(p):
-            os.remove(p)
-
-# HASHTAGS FUNCTION HATA DIYA GAYA HAI YAHAN SE
-
-# ---------------- NOTE: send-to-group callback ----------------
+    lines = ["📚 *Saved Notes:*\n"] + [f"#{n['note_id']} — {n['title']}" for n in notes]
+    await update.effective_message.reply_text("\n".join(lines) if notes else "Koi note nahi hai.", parse_mode="Markdown")
 
 async def notesend_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if not is_admin(query.from_user.id):
-        await query.answer("Sirf admin ye kar sakte hain.", show_alert=True)
-        return
-    note_id = query.data.split("_")[1]
-    await query.message.reply_text(
-        f"Kis group/channel me bhejna hai? Uska chat_id ke saath likho:\n`/pushnote {note_id} <chat_id>`",
-        parse_mode="Markdown"
-    )
+    if not is_admin(query.from_user.id): return
+    await query.message.reply_text(f"Group me bhejne ke liye likho:\n`/pushnote {query.data.split('_')[1]} <chat_id>`", parse_mode="Markdown")
 
 
-# =========================================================================
-# REACTIONS BOT
-# Bot apne khud ke messages (quiz results, ads, notes, boost posts) par
-# auto-react karta hai — is group me jitne bhi bot-posts jaate hain unpar
-# emoji reaction laga deta hai. Ye Telegram Bot API ke andar hi hota hai
-# (set_message_reaction), koi userbot/scraping nahi. Doosre users ke ya
-# doosre channels ke messages par react nahi karta.
-# =========================================================================
+# ---------------- PDF CLEANER ----------------
+async def handle_pdf_clean_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc.file_name.lower().endswith(".pdf"): return
+    status = await update.message.reply_text("⏳ PDF clean kar raha hoon...")
+    file = await context.bot.get_file(doc.file_id)
+    in_path, out_path = f"/tmp/in_{doc.file_unique_id}.pdf", f"/tmp/out_{doc.file_unique_id}.pdf"
+    await file.download_to_drive(in_path)
+    ok, msg = clean_pdf(in_path, out_path)
+    if not ok:
+        await status.edit_text(f"❌ Clean nahi ho paya: {msg}")
+    else:
+        db.log_pdf_job(update.effective_user.id, doc.file_name, "clean")
+        await update.message.reply_document(document=open(out_path, "rb"), filename=f"cleaned_{doc.file_name}", caption="✅ Clean ho gaya!")
+        await status.delete()
+    for p in (in_path, out_path):
+        if os.path.exists(p): os.remove(p)
 
+
+# ---------------- REACTIONS BOT ----------------
 async def reactions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Is group/channel me reactions on/off dikhata hai."""
-    if not await require_admin(update):
-        return
+    if not await check_admin(update): return
     chat = update.effective_chat
     gs = db.get_reaction_settings(chat.id)
     enabled = bool(gs["enabled"]) if gs else False
-    emojis = db.get_reaction_emojis(chat.id)
-    text = (
-        f"😀 *Reactions Bot — {chat.title or 'Yaha'}*\n\n"
-        f"Status: {'✅ ON' if enabled else '❌ OFF'}\n"
-        f"Emojis: {' '.join(emojis)}\n\n"
-        f"Jab bhi bot khud koi post (quiz result, ad, note, boost) bhejta hai, "
-        f"wo khud usi par in emojis se react karega — isse post active/lively dikhti hai.\n\n"
-        f"`/reactionson` — chalu karo\n"
-        f"`/reactionsoff` — band karo\n"
-        f"`/setreactionemojis 🔥 👍 🎉` — emojis badlo (space se separate, max 5)"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
+    text = (f"😀 *Reactions Bot*\nStatus: {'✅ ON' if enabled else '❌ OFF'}\n"
+            f"`/reactionson` — chalu karo\n`/reactionsoff` — band karo\n"
+            f"`/setreactionemojis 🔥 👍` — emojis badlo")
+    await update.effective_message.reply_text(text, parse_mode="Markdown")
 
 async def reactionson_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    chat = update.effective_chat
-    db.set_reaction_enabled(chat.id, True, update.effective_user.id)
-    await update.message.reply_text("✅ Reactions Bot chalu ho gaya — ab bot apne posts par auto-react karega.")
-
+    if not await check_admin(update): return
+    db.set_reaction_enabled(update.effective_chat.id, True, update.effective_user.id)
+    await update.effective_message.reply_text("✅ Reactions Bot chalu ho gaya.")
 
 async def reactionsoff_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    chat = update.effective_chat
-    db.set_reaction_enabled(chat.id, False, update.effective_user.id)
-    await update.message.reply_text("✅ Reactions Bot band kar diya.")
-
+    if not await check_admin(update): return
+    db.set_reaction_enabled(update.effective_chat.id, False, update.effective_user.id)
+    await update.effective_message.reply_text("✅ Reactions Bot band kar diya.")
 
 async def setreactionemojis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /setreactionemojis 🔥 👍 🎉  (max 5 emoji, space se separate)")
-        return
-    emojis = context.args[:5]
-    db.set_reaction_emojis(update.effective_chat.id, emojis, update.effective_user.id)
-    await update.message.reply_text(f"✅ Reaction emojis set: {' '.join(emojis)}")
-
+    if not await check_admin(update): return
+    if not context.args: return
+    db.set_reaction_emojis(update.effective_chat.id, context.args[:5], update.effective_user.id)
+    await update.effective_message.reply_text(f"✅ Reaction emojis set: {' '.join(context.args[:5])}")
 
 async def auto_react_to_bot_message(context, chat_id, message_id):
-    """Helper — kahin bhi bot ka apna message bhejne ke baad ye call karo.
-    Actual logic utils/reactions.py me hai (shared with quiz_engine.py)."""
     from utils.reactions import auto_react
-    await auto_react(context, chat_id, message_id)  # reactions optional hain, silently skip agar Telegram support na kare
+    await auto_react(context, chat_id, message_id)
 
 
-# =========================================================================
-# VISIBILITY / ENGAGEMENT BOOSTER
-# Genuine reach-improving tools: pin on post, scheduled re-posting, aur
-# apne hi purane data se "best time to post" suggestion. Ye kisi bhi fake
-# view/click/member count generate nahi karta — sirf asli tareeke se
-# content ko zyada logo tak pahuchne me madad karta hai.
-# =========================================================================
-
-ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
-
-
+# ---------------- VISIBILITY BOOSTER ----------------
 async def boost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return ConversationHandler.END
-    chat = update.effective_chat
-    if chat.type not in ("group", "supergroup", "channel"):
-        await update.message.reply_text("⚠️ Ye command us group/channel me chalao jaha post boost karni hai.")
-        return ConversationHandler.END
-    await update.message.reply_text("📝 Boost karne wala message/content likho:")
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📝 Boost karne wala message likho:\n(Cancel ke liye /cancel)")
     return ASK_BOOST_CONTENT
-
 
 async def boost_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["boost_content"] = update.message.text
-    await update.message.reply_text(
-        "🔘 Button chahiye? 'Button Text | https://link.com' format me likho, ya /skip likho."
-    )
+    await update.effective_message.reply_text("🔘 Button chahiye? 'Text | https://link.com' format me likho, ya /skip likho.")
     return ASK_BOOST_BUTTON
-
 
 async def boost_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    button_text, button_url = None, None
     if text != "/skip" and "|" in text:
-        button_text, button_url = [x.strip() for x in text.split("|", 1)]
-    context.user_data["boost_button_text"] = button_text
-    context.user_data["boost_button_url"] = button_url
-
-    await update.message.reply_text(
-        "⏱ Kitni der me repost karna hai (minutes me)? Aur kitni baar total?\n"
-        "Format: `<minutes> <times>`  (jaise: `120 3` = har 2 ghante me, total 3 baar)\n"
-        "Sirf ek baar post karna ho to `0 1` likho.",
-        parse_mode="Markdown"
-    )
+        context.user_data["btext"], context.user_data["burl"] = [x.strip() for x in text.split("|", 1)]
+    await update.effective_message.reply_text("⏱ Schedule batao format me: `<minutes> <times>`\n(jaise `120 3` har 2 ghante me 3 baar)", parse_mode="Markdown")
     return ASK_BOOST_SCHEDULE
-
 
 async def boost_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = update.message.text.strip().split()
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        await update.message.reply_text("⚠️ Format sahi nahi hai. Example: `120 3`", parse_mode="Markdown")
+        await update.effective_message.reply_text("⚠️ Format sahi nahi hai. Example: `120 3`")
         return ASK_BOOST_SCHEDULE
-
     every_min, times = int(parts[0]), int(parts[1])
     chat = update.effective_chat
-    content = context.user_data.get("boost_content", "")
-    button_text = context.user_data.get("boost_button_text")
-    button_url = context.user_data.get("boost_button_url")
-
-    reply_markup = None
-    if button_text and button_url:
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]])
-
+    btext = context.user_data.get("btext")
+    burl = context.user_data.get("burl")
+    rm = InlineKeyboardMarkup([[InlineKeyboardButton(btext, url=burl)]]) if btext else None
     try:
-        sent = await context.bot.send_message(chat.id, content, reply_markup=reply_markup)
-        member_count = None
-        try:
-            member_count = await context.bot.get_chat_member_count(chat.id)
-        except Exception:
-            pass
-        db.log_post_engagement(chat.id, sent.message_id, member_count)
+        sent = await context.bot.send_message(chat.id, context.user_data.get("boost_content"), reply_markup=rm)
         await auto_react_to_bot_message(context, chat.id, sent.message_id)
-
-        pin_it = True  # first post of a boost job gets pinned for visibility
-        if pin_it:
-            try:
-                await context.bot.pin_chat_message(chat.id, sent.message_id, disable_notification=True)
-            except Exception:
-                pass
-
-        job_id = db.create_boost_job(chat.id, content, button_text, button_url, every_min,
-                                     times, pin_it, update.effective_user.id)
+        job_id = db.create_boost_job(chat.id, context.user_data.get("boost_content"), btext, burl, every_min, times, True, update.effective_user.id)
         db.mark_boost_job_run(job_id, every_min)
-
-        msg = f"✅ Post bhej diya gaya aur pin kar diya!"
-        if every_min and times > 1:
-            msg += f"\nAgle {times - 1} repost har {every_min} minute me automatically honge."
-        await update.message.reply_text(msg)
+        await update.effective_message.reply_text("✅ Post bhej diya gaya!")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-
+        await update.effective_message.reply_text(f"❌ Error: {e}")
     context.user_data.clear()
     return ConversationHandler.END
 
-
 async def boostlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
+    if not await check_admin(update): return
     jobs = db.get_active_boost_jobs(update.effective_chat.id)
-    if not jobs:
-        await update.message.reply_text("Is group/channel me koi active boost job nahi hai.")
-        return
-    lines = ["🚀 *Active Boost Jobs:*\n"]
-    for j in jobs:
-        lines.append(f"#{j['job_id']} — {j['repost_count_done']}/{j['max_reposts'] or '∞'} posts done, "
-                     f"har {j['repost_every_minutes']} min me")
-    lines.append("\nRokne ke liye: `/stopboost <id>`")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
+    lines = ["🚀 *Active Boosts:*\n"] + [f"#{j['job_id']} — har {j['repost_every_minutes']} min me"]
+    await update.effective_message.reply_text("\n".join(lines) if jobs else "Koi active boost nahi hai.", parse_mode="Markdown")
 
 async def stopboost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /stopboost <job_id>")
-        return
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
     db.deactivate_boost_job(int(context.args[0]))
-    await update.message.reply_text("✅ Boost job rok diya gaya.")
-
+    await update.effective_message.reply_text("✅ Boost job rok diya gaya.")
 
 async def besttime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Is group ke apne purane quiz-activity data se best posting hours
-    nikaalta hai — koi external/fake data nahi, sirf real usage pattern."""
-    if not await require_admin(update):
-        return
-    chat = update.effective_chat
-    best_hours = db.get_best_posting_hours(chat.id)
-    if not best_hours:
-        await update.message.reply_text(
-            "📊 Abhi is group ka itna activity-data nahi hai suggestion dene ke liye. "
-            "Kuch quizzes karwao, phir dobara try karo."
-        )
-        return
-    lines = ["⏰ *Best Posting Time Suggestions*\n(Is group ke apne quiz-activity data ke aadhar par)\n"]
-    for hour, count in best_hours:
-        period = "AM" if hour < 12 else "PM"
-        display_hour = hour % 12 or 12
-        lines.append(f"• {display_hour}:00 {period} — {count} activities is ghante me")
-    lines.append("\nInhi ghanto me post/quiz karwana zyada log active milenge.")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    if not await check_admin(update): return
+    hours = db.get_best_posting_hours(update.effective_chat.id)
+    lines = ["⏰ *Best Posting Times*\n"] + [f"• {h%12 or 12}:00 {'AM' if h<12 else 'PM'} — {c} activities" for h, c in hours]
+    await update.effective_message.reply_text("\n".join(lines) if hours else "Data nahi hai.", parse_mode="Markdown")
 
 
-# =========================================================================
-# GROUP/CHANNEL DIRECTORY
-# Admin apne khud ke (jinke wo owner/admin hain) groups/channels ko category
-# ke saath list karta hai. Users /discover se apni interest ke hisaab se
-# browse karte hain. Ye kisi doosre ke channels ko scan/scrape NAHI karta —
-# sirf wahi entries hoti hain jo admin ne khud add ki hon.
-# =========================================================================
-
-ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
-
-
+# ---------------- DIRECTORY ----------------
 async def adddirectory_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📋 *Naya Group/Channel Directory Entry*\n\n"
-        "⚠️ Sirf apne khud ke (jinke tum owner/admin ho) groups/channels add karo.\n\n"
-        "Title likho (jaise: Physics Study Group):",
-        parse_mode="Markdown"
-    )
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📋 Title likho (jaise: Physics Study Group):\n(Cancel ke liye /cancel)")
     return ASK_DIR_TITLE
-
 
 async def adddirectory_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["dir_title"] = update.message.text.strip()
-    await update.message.reply_text("📝 Chhoti si description likho:")
+    await update.effective_message.reply_text("📝 Chhoti si description likho:")
     return ASK_DIR_DESC
-
 
 async def adddirectory_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["dir_desc"] = update.message.text.strip()
-    await update.message.reply_text(
-        "🏷 Category likho (jaise: Education, Coding, Motivation, General):"
-    )
+    await update.effective_message.reply_text("🏷 Category likho (jaise: Education, Motivation):")
     return ASK_DIR_CATEGORY
-
 
 async def adddirectory_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["dir_category"] = update.message.text.strip()
-    await update.message.reply_text("🔗 Invite link bhejo (https://t.me/... ya @username):")
+    await update.effective_message.reply_text("🔗 Invite link bhejo (https://...):")
     return ASK_DIR_LINK
 
-
 async def adddirectory_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    link = update.message.text.strip()
-    title = context.user_data.get("dir_title", "")
-    desc = context.user_data.get("dir_desc", "")
-    category = context.user_data.get("dir_category", "General")
-
-    entry_id = db.add_directory_entry(title, desc, category, link, update.effective_user.id)
-    await update.message.reply_text(
-        f"✅ Directory me add ho gaya! (#{entry_id})\n📋 {title} — {category}\n\n"
-        f"Users ab `/discover` se ise dekh sakte hain."
-    )
+    entry_id = db.add_directory_entry(context.user_data["dir_title"], context.user_data["dir_desc"], 
+                                      context.user_data["dir_category"], update.message.text.strip(), update.effective_user.id)
+    await update.effective_message.reply_text(f"✅ Directory me add ho gaya! (#{entry_id})\nMenu ke liye /menu dabayein.")
     context.user_data.clear()
     return ConversationHandler.END
 
-
 async def removedirectory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await require_admin(update):
-        return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /removedirectory <entry_id>")
-        return
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
     db.deactivate_directory_entry(int(context.args[0]))
-    await update.message.reply_text("✅ Directory entry hata di gayi.")
+    await update.effective_message.reply_text("✅ Directory entry hata di gayi.")
