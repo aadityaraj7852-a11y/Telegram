@@ -19,7 +19,7 @@ from utils.pdf_cleaner import clean_pdf
 from utils.html_notes import sanitize_for_telegram, chunk_message
 
 # Conversation states
-ASK_SUBJECT, ASK_CHAPTER, ASK_QUESTION, ASK_OPTIONS, ASK_ANSWER, ASK_EXPLANATION = range(6)
+ASK_SUBJECT, ASK_CHAPTER, ASK_DOCX_FILE = range(3)
 ASK_AD_CONTENT, ASK_AD_BUTTON = range(100, 102)
 ASK_NOTE_TITLE, ASK_NOTE_CONTENT = range(200, 202)
 ASK_GROUP_ID, ASK_GROUP_COINRATE, ASK_GROUP_NEGATIVE, ASK_GROUP_ENTRYFEE = range(300, 304)
@@ -46,60 +46,73 @@ async def check_owner(update: Update):
     return await require_owner(update)
 
 
-# ---------------- MANUAL ADD QUESTION ----------------
+# ---------------- ADD QUESTION (SUBJECT -> CHAPTER -> WORD FILE) ----------------
 async def addquestion_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📚 Subject ka naam likho (jaise: Physics):\n(Cancel ke liye /cancel)")
+    await update.effective_message.reply_text("📚 Subject ka naam likho (jaise: Rajasthan GK):\n(Cancel ke liye /cancel)")
     return ASK_SUBJECT
 
 async def addquestion_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_q_subject"] = update.message.text.strip()
-    await update.effective_message.reply_text("📑 Chapter ka naam likho (jaise: Motion):")
+    await update.effective_message.reply_text("📑 Chapter ka naam likho (jaise: Geography):")
     return ASK_CHAPTER
 
 async def addquestion_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_q_chapter"] = update.message.text.strip()
-    await update.effective_message.reply_text("❓ Ab question likho:")
-    return ASK_QUESTION
+    await update.effective_message.reply_text(
+        "📎 Ab apne questions ki Word (.docx) file upload karo:\n\n"
+        "(Bot automatically sirf Hindi direction wale questions extract karega aur "
+        "baaki English wale ya extra text ko ignore kar dega.)"
+    )
+    return ASK_DOCX_FILE
 
-async def addquestion_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["new_q_text"] = update.message.text.strip()
-    await update.effective_message.reply_text("🔤 Options likho, ek line me ek option.\nJab sab ho jaye to /done likhna.")
-    context.user_data["new_q_options"] = []
-    return ASK_OPTIONS
+async def addquestion_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc or not doc.file_name.lower().endswith(".docx"):
+        await update.effective_message.reply_text("❌ Kripya sirf Word (.docx) file bhejein ya /cancel likhein.")
+        return ASK_DOCX_FILE
 
-async def addquestion_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text == "/done":
-        opts = context.user_data.get("new_q_options", [])
-        if len(opts) < 2:
-            await update.effective_message.reply_text("Kam se kam 2 options chahiye. Aur options bhejo:")
-            return ASK_OPTIONS
-        letters = ", ".join(f"{chr(65+i)}) {o}" for i, o in enumerate(opts))
-        await update.effective_message.reply_text(f"✅ Options: {letters}\n\nAb sahi answer ka letter likho (A/B/C/D):")
-        return ASK_ANSWER
-    context.user_data["new_q_options"].append(text)
-    await update.effective_message.reply_text(f"✅ Add hua: {text}\nAur option bhejo ya /done likho.")
-    return ASK_OPTIONS
+    await update.effective_message.reply_text("⏳ File padh raha hoon... kripya pratiksha karein.")
+    file = await context.bot.get_file(doc.file_id)
+    local_path = f"/tmp/{doc.file_unique_id}.docx"
+    await file.download_to_drive(local_path)
 
-async def addquestion_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    letter = update.message.text.strip().upper()
-    opts = context.user_data.get("new_q_options", [])
-    if letter not in [chr(65+i) for i in range(len(opts))]:
-        await update.effective_message.reply_text("⚠️ Sahi letter likho:")
-        return ASK_ANSWER
-    context.user_data["new_q_correct"] = ord(letter) - ord('A')
-    await update.effective_message.reply_text("💡 Explanation likho (optional, skip ke liye /skip likho):")
-    return ASK_EXPLANATION
+    try:
+        parsed = parse_docx(local_path)
+        # File ke ander ke subject/chapter ko user ke input se override kar rahe hain
+        for q in parsed:
+            q["subject"] = context.user_data["new_q_subject"]
+            q["chapter"] = context.user_data["new_q_chapter"]
+            
+        valid, errors = validate_parsed(parsed)
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ File padhne me error: {e}")
+        if os.path.exists(local_path): os.remove(local_path)
+        return ConversationHandler.END
 
-async def addquestion_explanation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    explanation = "" if text == "/skip" else text
-    chapter_id = db.find_or_create_chapter(context.user_data["new_q_subject"], context.user_data["new_q_chapter"])
-    qid = db.add_question(chapter_id, context.user_data["new_q_text"], context.user_data["new_q_options"], 
-                          context.user_data["new_q_correct"], explanation, update.effective_user.id)
-    await update.effective_message.reply_text(f"✅ Question add ho gaya! (ID #{qid})\nMenu ke liye /menu dabayein.")
+    if os.path.exists(local_path): os.remove(local_path)
+
+    if not valid:
+        await update.effective_message.reply_text("❌ Koi valid question add nahi hua. (Shayad sabhi English questions the ya file format galat tha).")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    added = 0
+    for q in valid:
+        chapter_id = db.find_or_create_chapter(q["subject"], q["chapter"])
+        db.add_question(chapter_id, q["question"], q["options"], q["correct_index"], q["explanation"], update.effective_user.id)
+        added += 1
+
+    msg = (
+        f"✅ Success! Aapki file se {added} Hindi questions successfully upload ho gaye.\n"
+        f"📚 Subject: {context.user_data['new_q_subject']}\n"
+        f"📑 Chapter: {context.user_data['new_q_chapter']}"
+    )
+    if errors:
+        msg += f"\n\n⚠️ {len(errors)} questions skip hue (format error ki wajah se)."
+        
+    await update.effective_message.reply_text(msg)
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -109,11 +122,14 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ---------------- WORD FILE UPLOAD ----------------
+# ---------------- DIRECT WORD FILE UPLOAD (OPTIONAL / OLD COMMAND) ----------------
 async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
-    await update.effective_message.reply_text("📎 Word (.docx) file bhejo jisme questions likhe ho.\nFormat nahi pata? /samplefile se template check karo.")
+    await update.effective_message.reply_text(
+        "📎 Direct Word (.docx) file bhejo.\n"
+        "(Naya flow use karne ke liye /addquestion ya 'Add Question' button dabayein.)"
+    )
 
 async def handle_docx_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return
@@ -168,7 +184,6 @@ async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ---------------- NEW ADMIN MANAGEMENT (UI BASED) ----------------
 async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Button click se sab admins ki list dikhata hai aur add/remove ke buttons deta hai"""
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
 
@@ -190,11 +205,7 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_owner(update): return ConversationHandler.END
-    await update.effective_message.reply_text(
-        "➕ Jis user ko admin banana hai, uska Telegram ID bhejo:\n\n"
-        "(ID pata karne ke liye us user se kaho bot me /start dabaye ya @userinfobot check kare)\n\n"
-        "(Cancel karne ke liye /cancel likho)"
-    )
+    await update.effective_message.reply_text("➕ Jis user ko admin banana hai, uska Telegram ID bhejo:\n\n(Cancel karne ke liye /cancel likho)")
     return ASK_ADMIN_ID_ADD
 
 async def admin_add_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -223,7 +234,6 @@ async def admin_rem_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ User {uid} ko admin se hata diya gaya hai.\n\nMenu me wapas jane ke liye /menu dabayein.")
     return ConversationHandler.END
 
-# Old text commands for backup compatibility
 async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_owner(update): return
     if not context.args or not context.args[0].isdigit():
