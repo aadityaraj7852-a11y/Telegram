@@ -1,117 +1,156 @@
 """
-docx_parser.py
-Word file se questions padhne ka logic.
-
-Expected format in .docx file (ek simple, sikhane-jaisa format):
-
-Subject: Physics
-Chapter: Motion
-
-Q1. Speed ka SI unit kya hai?
-A) Kg
-B) m/s
-C) Newton
-D) Watt
-Answer: B
-Explanation: Speed = distance/time, unit m/s hota hai.
-
-Q2. ...
-A) ...
-B) ...
-C) ...
-D) ...
-Answer: A
-
-(Explanation optional hai)
-Multiple chapters/subjects same file me ho sakte hain, bas naya
-"Subject:" ya "Chapter:" line likhna hoga jahan se badle.
+utils/docx_parser.py
+Word (.docx) files ko parse karne ka logic.
+Ye file sirf #Hindi_directions wale questions ko extract karegi aur #English_directions walo ko ignore karegi.
 """
-
+import docx
 import re
-from docx import Document
-
 
 def parse_docx(file_path):
-    """
-    Returns: list of dicts:
-    {subject, chapter, question, options[4], correct_index, explanation}
-    """
-    doc = Document(file_path)
-    lines = [p.text.strip() for p in doc.paragraphs if p.text.strip() != ""]
-
-    results = []
-    current_subject = "General"
-    current_chapter = "General"
-
-    q_text = None
-    options = []
-    correct_index = None
-    explanation = ""
-
-    def flush():
-        nonlocal q_text, options, correct_index, explanation
-        if q_text and len(options) >= 2 and correct_index is not None:
-            results.append({
-                "subject": current_subject,
-                "chapter": current_chapter,
-                "question": q_text,
-                "options": options[:4] if len(options) >= 4 else options,
-                "correct_index": correct_index,
-                "explanation": explanation
-            })
-        q_text = None
-        options = []
-        correct_index = None
-        explanation = ""
-
-    for line in lines:
-        subj_match = re.match(r"^subject\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
-        chap_match = re.match(r"^chapter\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
-        q_match = re.match(r"^q\d*[\.\)]\s*(.+)$", line, re.IGNORECASE)
-        opt_match = re.match(r"^([A-Da-d])[\.\)]\s*(.+)$", line)
-        ans_match = re.match(r"^answer\s*[:\-]\s*([A-Da-d])\s*$", line, re.IGNORECASE)
-        exp_match = re.match(r"^explanation\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
-
-        if subj_match:
-            flush()
-            current_subject = subj_match.group(1).strip()
+    doc = docx.Document(file_path)
+    parsed_questions = []
+    
+    current_q = None
+    current_section = "General"
+    current_key = None
+    
+    # Naya Flag: Default true rakha hai, par tag ke hisaab se change hoga
+    process_questions = True 
+    
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
             continue
-        if chap_match:
-            flush()
-            current_chapter = chap_match.group(1).strip()
+            
+        # Section tag read karna
+        if text.startswith("###Section"):
+            current_section = text.replace("###Section", "").strip()
             continue
-        if q_match:
-            flush()
-            q_text = q_match.group(1).strip()
+            
+        # Direction check karna - yahan se decide hoga question lena hai ya nahi
+        if text.startswith("#Hindi_directions"):
+            process_questions = True
             continue
-        if opt_match:
-            options.append(opt_match.group(2).strip())
+            
+        if text.startswith("#English_directions"):
+            process_questions = False
             continue
-        if ans_match:
-            letter = ans_match.group(1).upper()
-            correct_index = ord(letter) - ord('A')
-            continue
-        if exp_match:
-            explanation = exp_match.group(1).strip()
-            continue
+            
+        # Question tag milne par naya question start karna
+        if text.startswith("#Question"):
+            # Agar English direction chal raha hai, to is question ko poori tarah skip kar do
+            if not process_questions:
+                current_q = None # Reset kar diya taaki iske options/answers bhi skip ho jayein
+                continue
 
-    flush()
-    return results
+            # Agar pehle se koi Hindi question memory me hai, to use list me save kar do
+            if current_q and current_q.get("question"):
+                parsed_questions.append(current_q)
+                
+            current_q = {
+                "subject": current_section,
+                "chapter": "Misc",
+                "question": "",
+                "options": [],
+                "correct_index": 0,
+                "explanation": ""
+            }
+            current_key = "question"
+            
+            # "#Question 1" jaise tags ko hata kar main sawal nikalna
+            q_text = re.sub(r"^#Question\s*\d*", "", text).strip()
+            if q_text:
+                current_q["question"] += q_text + "\n"
+            continue
+            
+        # Agar current_q None hai (yani English question chal raha tha), to aage ki lines ignore karo
+        if not current_q:
+            continue
+            
+        # Options tag aane par
+        if text.startswith("#Options"):
+            current_key = "options"
+            continue
+            
+        if current_key == "options":
+            # Sub-tags jaise ###A, ###B ko ignore karna
+            if text.startswith("###A") or text.startswith("###B") or text.startswith("###C") or text.startswith("###D"):
+                continue
+            # Agar option list ke baad Correct option aa jaye
+            if text.startswith("#Correct_option"):
+                current_key = "correct"
+                continue
+                
+            # Option ke aage se "A. " ya "B. " hata kar option ko save karna
+            opt_text = re.sub(r"^[A-D]\.\s*", "", text).strip()
+            if opt_text:
+                current_q["options"].append(opt_text)
+            continue
+            
+        # Sahi answer tag
+        if text.startswith("#Correct_option"):
+            current_key = "correct"
+            continue
+            
+        if current_key == "correct":
+            if text.startswith("#Solution"):
+                current_key = "solution"
+                continue
+            
+            ans_letter = text.strip().upper()
+            if ans_letter in ['A', 'B', 'C', 'D']:
+                current_q["correct_index"] = ord(ans_letter) - ord('A')
+            continue
+            
+        # Solution (Explanation) tag
+        if text.startswith("#Solution"):
+            current_key = "solution"
+            continue
+            
+        if current_key == "solution":
+            if text.startswith("#tags"):
+                current_key = "tags"
+                continue
+            current_q["explanation"] += text + "\n"
+            continue
+            
+        # Extra Tags (jaise Rajasthan GK)
+        if text.startswith("#tags"):
+            current_key = "tags"
+            continue
+            
+        if current_key == "tags":
+            current_q["chapter"] = text.strip()
+            current_key = None
+            continue
+            
+        # Bacha hua normal text (agar paragraph bada ho to)
+        if current_key == "question":
+            current_q["question"] += text + "\n"
+        elif current_key == "solution":
+            current_q["explanation"] += text + "\n"
+            
+    # File ke aakhri question ko list me save karna
+    if current_q and current_q.get("question"):
+        parsed_questions.append(current_q)
+        
+    # Extra spaces (newlines) saaf karna
+    for q in parsed_questions:
+        q["question"] = q["question"].strip()
+        q["explanation"] = q["explanation"].strip()
+        
+    return parsed_questions
 
-
-def validate_parsed(parsed_questions):
-    """Basic validation, returns (valid_list, error_list)"""
+def validate_parsed(parsed_data):
+    """Check karta hai ki question aur options sahi se aaye ya nahi"""
     valid = []
     errors = []
-    for i, q in enumerate(parsed_questions, 1):
-        if len(q["options"]) < 2:
-            errors.append(f"Q{i}: kam se kam 2 options chahiye")
+    for i, q in enumerate(parsed_data):
+        if not q.get("question"):
+            errors.append(f"Ek question ka text missing hai.")
             continue
-        if q["correct_index"] is None or q["correct_index"] >= len(q["options"]):
-            errors.append(f"Q{i}: sahi 'Answer:' letter set nahi hai ya options se match nahi karta")
-            continue
-        if len(q["question"]) < 3:
-            errors.append(f"Q{i}: question text bahut chota/khali hai")
+        if len(q.get("options", [])) < 2:
+            errors.append(f"Question '{q.get('question')[:20]}...' me 2 se kam options hain.")
             continue
         valid.append(q)
     return valid, errors
