@@ -37,8 +37,11 @@ def main_menu_keyboard(user_id):
          InlineKeyboardButton("🪙 Wallet", callback_data="menu_wallet")],
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
-        [InlineKeyboardButton("💬 Students Lounge", callback_data="menu_lounge"),
+        # Yahan par Students Lounge ki jagah naye Social Links add kiye gaye hain
+        [InlineKeyboardButton("💬 Discussion Group", url="https://t.me/your_group_link"),
          InlineKeyboardButton("📋 Discover", callback_data="menu_discover")],
+        [InlineKeyboardButton("📺 YouTube Channel", url="https://youtube.com/your_channel_link"),
+         InlineKeyboardButton("📸 Instagram Page", url="https://instagram.com/your_insta_link")],
     ]
     if is_admin(user_id):
         keyboard.append([InlineKeyboardButton("👑 Admin Panel", callback_data="menu_admin")])
@@ -99,7 +102,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"👋 Namaste {user.first_name}!\n\n"
         "Main tumhara Quiz Bot hoon 🎯 — quiz khelo, coins kamao, "
-        "leaderboard me top karo, aur students ke saath jud jao!\n\n"
+        "leaderboard me top karo, aur hamare platforms se jud jao!\n\n"
         "Neeche diye options me se chuno 👇"
     )
     await update.message.reply_text(text, reply_markup=main_menu_keyboard(user.id))
