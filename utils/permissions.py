@@ -1,29 +1,29 @@
-import database as db
+"""
+utils/permissions.py
+Handles owner and admin checks.
+"""
 import config
 
-
 def is_owner(user_id):
-    return user_id == config.OWNER_ID
-
+    # Check karta hai ki user pehla owner hai ya dusra owner
+    main_owner = user_id == config.OWNER_ID
+    # getattr use kar rahe hain taaki agar config me SECOND_OWNER_ID na ho to bot crash na ho
+    second_owner = user_id == getattr(config, "SECOND_OWNER_ID", 0)
+    
+    return main_owner or second_owner
 
 def is_admin(user_id):
-    return db.is_admin(user_id, config.OWNER_ID)
+    # Agar wo owner hai, ya phir extra admins ki list me hai, to wo admin hai
+    return is_owner(user_id) or user_id in config.EXTRA_ADMIN_IDS
 
-
-async def require_admin(update):
-    """Returns True if user is admin, else sends a denial message and returns False."""
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.effective_message.reply_text(
-            "⛔ Ye command sirf admin/owner use kar sakte hain.")
+async def require_owner(update):
+    if not is_owner(update.effective_user.id):
+        await update.message.reply_text("⛔ Sirf Owner hi ye command use kar sakta hai.")
         return False
     return True
 
-
-async def require_owner(update):
-    user_id = update.effective_user.id
-    if not is_owner(user_id):
-        await update.effective_message.reply_text(
-            "⛔ Ye command sirf bot owner use kar sakta hai.")
+async def require_admin(update):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Sirf Admin hi ye command use kar sakta hai.")
         return False
     return True
