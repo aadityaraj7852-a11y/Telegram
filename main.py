@@ -5,6 +5,9 @@ service ke roop me run karo (python main.py).
 """
 
 import logging
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.ext import (
@@ -25,25 +28,38 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# =========================================================================
+# DUMMY SERVER (Render Free Tier par bot ko sleep hone se rokne ke liye)
+# =========================================================================
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running!")
+        
+    def log_message(self, format, *args):
+        # Spammy logs ko band karne ke liye
+        pass 
+
+def keep_alive_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+# =========================================================================
+
+
 async def track_group_membership(update: Update, context):
-    """Jab bot kisi group me add ho ya group ka title change ho"""
     chat = update.effective_chat
     if chat.type in ("group", "supergroup"):
         db.upsert_group(chat.id, chat.title)
 
-
 async def run_due_boost_jobs(context):
-    """JobQueue callback — har minute chalta hai, jitne bhi Visibility
-    Booster jobs ka time ho gaya hai unhe repost karta hai (aur agar
-    reactions on hain to us group me auto-react bhi karta hai)."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from utils.reactions import auto_react
-
     due = db.get_due_boost_jobs()
     for job in due:
-        reply_markup = None
-        if job["button_text"] and job["button_url"]:
-            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(job["button_text"], url=job["button_url"])]])
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(job["button_text"], url=job["button_url"])]]) if job["button_text"] else None
         try:
             sent = await context.bot.send_message(job["chat_id"], job["content"], reply_markup=reply_markup)
             db.mark_boost_job_run(job["job_id"], job["repost_every_minutes"])
@@ -51,57 +67,32 @@ async def run_due_boost_jobs(context):
             if job["max_reposts"] and job["repost_count_done"] + 1 >= job["max_reposts"]:
                 db.deactivate_boost_job(job["job_id"])
         except Exception:
-            logger.exception(f"Boost job #{job['job_id']} repost karne me error aayi")
             db.deactivate_boost_job(job["job_id"])
 
-
 async def track_user_activity(update: Update, context):
-    """Har message pe user ko 'online'/'last seen' mark karo"""
     if update.effective_user:
         user = update.effective_user
         db.upsert_user(user.id, user.username, user.first_name)
         db.touch_online(user.id)
 
-
 async def admin_menu_router(update: Update, context):
-    """Admin panel ke 'amenu_*' buttons — inline conversation start nahi ho
-    sakta callback se, is liye user ko sahi command batate hain (copy-paste
-    friendly) taaki wo turant chala sake."""
     query = update.callback_query
     await query.answer()
-
     hints = {
-        "amenu_addq": "➕ Naya question add karne ke liye likho:\n/addquestion",
-        "amenu_uploadword": "📎 Word file upload karne ke liye likho:\n/uploadword\n(phir .docx file bhej do)",
-        "amenu_export": "📦 Poora question bank export karne ke liye likho:\n/exportquestions",
-        "amenu_sample": "📄 Sample format file paane ke liye likho:\n/samplefile",
-        "amenu_groupsettings": "⚙️ Group settings dekhne ke liye us group me jaake likho:\n/groupsettings",
-        "amenu_listgroups": "📋 Sab registered groups dekhne ke liye likho:\n/listgroups",
-        "amenu_broadcast": "📢 Sab users ko message bhejne ke liye likho:\n/broadcast <tumhara message>",
-        "amenu_postad": "📣 Ad post karne ke liye likho:\n/postad",
-        "amenu_sendnote": "📝 Naya HTML note banane ke liye likho:\n/sendnote",
-        "amenu_backup": "💾 Database backup paane ke liye likho:\n/backup",
-        "amenu_stats": "📊 Bot stats dekhne ke liye likho:\n/stats",
-        "amenu_withdrawals": "💰 Pending withdrawals dekhne ke liye likho:\n/withdrawals",
-        "amenu_admins": "👮 Sab admins dekhne ke liye likho:\n/listadmins",
-        "amenu_reactions": "😀 Reactions Bot dekhne/on-off karne ke liye us group me likho:\n/reactions",
-        "amenu_boost": "🚀 Post ko boost (pin + scheduled repost) karne ke liye us group me likho:\n/boost\n\nActive boosts dekhne ke liye:\n/boostlist\n\nBest posting time dekhne ke liye:\n/besttime",
-        "amenu_directory": "📋 Apna group/channel directory me add karne ke liye likho:\n/adddirectory\n\nHatane ke liye:\n/removedirectory <id>",
+        "amenu_groupsettings": "⚙️ Group settings dekhne ke liye bot ko apne group me add karein aur wahan likho:\n/groupsettings",
+        "amenu_reactions": "😀 Reactions Bot set karne ke liye us group me likho:\n/reactions",
+        "amenu_boost": "🚀 Post ko boost (pin + scheduled repost) karne ke liye us group me likho:\n/boost\n\nActive boosts dekhne ke liye:\n/boostlist",
     }
     text = hints.get(query.data, "Command available nahi hai.")
     await query.edit_message_text(text, reply_markup=uh._back_kb())
 
-
 def build_app():
     db.init_db()
-
     app = Application.builder().token(config.BOT_TOKEN).build()
 
-    # ---- Activity tracking (runs first, non-blocking group) ----
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, track_user_activity), group=-1)
     app.add_handler(ChatMemberHandler(track_group_membership, ChatMemberHandler.MY_CHAT_MEMBER), group=-1)
 
-    # ---- User commands ----
     app.add_handler(CommandHandler("start", uh.start_cmd))
     app.add_handler(CommandHandler("menu", uh.menu_cmd))
     app.add_handler(CommandHandler("help", uh.help_cmd))
@@ -117,90 +108,117 @@ def build_app():
     app.add_handler(CommandHandler("referral", uh.referral_cmd))
     app.add_handler(CommandHandler("withdraw", uh.withdraw_cmd))
     app.add_handler(CommandHandler("subjects", uh.subjects_cmd))
-    app.add_handler(CommandHandler("lounge", uh.lounge_cmd))
 
-    # ---- Main menu button router ----
     app.add_handler(CallbackQueryHandler(uh.menu_router, pattern=r"^menu_"))
-    app.add_handler(CallbackQueryHandler(admin_menu_router, pattern=r"^amenu_"))
 
-    # ---- Quiz selection callbacks (group quiz) ----
-    app.add_handler(CallbackQueryHandler(uh.subject_selected, pattern=r"^qsubj_"))
-    app.add_handler(CallbackQueryHandler(uh.chapter_selected, pattern=r"^qchap_"))
-    app.add_handler(CallbackQueryHandler(uh.all_chapters_selected, pattern=r"^qallchap_"))
-    app.add_handler(CallbackQueryHandler(uh.length_selected, pattern=r"^qlen_"))
-    app.add_handler(CallbackQueryHandler(uh.subject_length_selected, pattern=r"^qslen_"))
+    # ---- Direct Button Mapping for Admin Panel ----
+    app.add_handler(CallbackQueryHandler(ah.uploadword_prompt, pattern=r"^amenu_uploadword$"))
+    app.add_handler(CallbackQueryHandler(ah.samplefile_cmd, pattern=r"^amenu_sample$"))
+    app.add_handler(CallbackQueryHandler(ah.exportquestions_cmd, pattern=r"^amenu_export$"))
+    app.add_handler(CallbackQueryHandler(ah.backup_cmd, pattern=r"^amenu_backup$"))
+    app.add_handler(CallbackQueryHandler(ah.stats_cmd, pattern=r"^amenu_stats$"))
+    app.add_handler(CallbackQueryHandler(ah.withdrawals_cmd, pattern=r"^amenu_withdrawals$"))
+    app.add_handler(CallbackQueryHandler(ah.manage_admins_menu, pattern=r"^amenu_admins$"))
+    app.add_handler(CallbackQueryHandler(ah.listgroups_cmd, pattern=r"^amenu_listgroups$"))
 
-    # ---- Solo practice callbacks ----
-    app.add_handler(CallbackQueryHandler(uh.solo_subject_selected, pattern=r"^solosubj_"))
-    app.add_handler(CallbackQueryHandler(uh.solo_length_selected, pattern=r"^sololen_"))
+    # ---- UI-Based Admin Conversations ----
+    app.add_handler(ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(ah.admin_add_start, pattern=r"^admin_add_btn$"),
+            CallbackQueryHandler(ah.admin_rem_start, pattern=r"^admin_rem_btn$")
+        ],
+        states={
+            ah.ASK_ADMIN_ID_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_add_process)],
+            ah.ASK_ADMIN_ID_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_rem_process)],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
 
-    # ---- 1v1 duel callbacks ----
-    app.add_handler(CallbackQueryHandler(uh.duel_subject_selected, pattern=r"^duelsubj_"))
-    app.add_handler(CallbackQueryHandler(uh.duel_length_selected, pattern=r"^duellen_"))
-    app.add_handler(CallbackQueryHandler(uh.duel_accept_callback, pattern=r"^duelaccept_"))
-    app.add_handler(CallbackQueryHandler(uh.duel_decline_callback, pattern=r"^dueldecline_"))
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("broadcast", ah.broadcast_start), CallbackQueryHandler(ah.broadcast_start, pattern=r"^amenu_broadcast$")],
+        states={ah.ASK_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.broadcast_process)]},
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
 
-    # ---- Poll answers (core quiz scoring, group + solo + duel) ----
-    app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
-
-    # ---- Admin: manual add question (conversation) ----
-    addq_conv = ConversationHandler(
-        entry_points=[CommandHandler("addquestion", ah.addquestion_start)],
+    # Naya Word File Add Question Flow
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("addquestion", ah.addquestion_start), CallbackQueryHandler(ah.addquestion_start, pattern=r"^amenu_addq$")],
         states={
             ah.ASK_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.addquestion_subject)],
             ah.ASK_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.addquestion_chapter)],
-            ah.ASK_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.addquestion_question)],
-            ah.ASK_OPTIONS: [MessageHandler(filters.TEXT, ah.addquestion_options)],
-            ah.ASK_ANSWER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.addquestion_answer)],
-            ah.ASK_EXPLANATION: [MessageHandler(filters.TEXT, ah.addquestion_explanation)],
+            ah.ASK_DOCX_FILE: [MessageHandler(filters.Document.FileExtension("docx"), ah.addquestion_file)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    )
-    app.add_handler(addq_conv)
+    ))
 
-    # ---- Admin: post ad (conversation) ----
-    ad_conv = ConversationHandler(
-        entry_points=[CommandHandler("postad", ah.postad_start)],
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("postad", ah.postad_start), CallbackQueryHandler(ah.postad_start, pattern=r"^amenu_postad$")],
         states={
             ah.ASK_AD_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.postad_content)],
             ah.ASK_AD_BUTTON: [MessageHandler(filters.TEXT, ah.postad_button)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    )
-    app.add_handler(ad_conv)
+    ))
 
-    # ---- Admin: HTML note composer (conversation) ----
-    note_conv = ConversationHandler(
-        entry_points=[CommandHandler("sendnote", ah.sendnote_start)],
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("sendnote", ah.sendnote_start), CallbackQueryHandler(ah.sendnote_start, pattern=r"^amenu_sendnote$")],
         states={
             ah.ASK_NOTE_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.sendnote_title)],
             ah.ASK_NOTE_CONTENT: [MessageHandler(filters.TEXT, ah.sendnote_content)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    )
-    app.add_handler(note_conv)
+    ))
+
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("adddirectory", ah.adddirectory_start), CallbackQueryHandler(ah.adddirectory_start, pattern=r"^amenu_directory$")],
+        states={
+            ah.ASK_DIR_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_title)],
+            ah.ASK_DIR_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_desc)],
+            ah.ASK_DIR_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_category)],
+            ah.ASK_DIR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_link)],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
+
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("boost", ah.boost_start)],
+        states={
+            ah.ASK_BOOST_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_content)],
+            ah.ASK_BOOST_BUTTON: [MessageHandler(filters.TEXT, ah.boost_button)],
+            ah.ASK_BOOST_SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_schedule)],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
+
+    app.add_handler(CallbackQueryHandler(admin_menu_router, pattern=r"^amenu_"))
+
+    app.add_handler(CallbackQueryHandler(uh.subject_selected, pattern=r"^qsubj_"))
+    app.add_handler(CallbackQueryHandler(uh.chapter_selected, pattern=r"^qchap_"))
+    app.add_handler(CallbackQueryHandler(uh.all_chapters_selected, pattern=r"^qallchap_"))
+    app.add_handler(CallbackQueryHandler(uh.length_selected, pattern=r"^qlen_"))
+    app.add_handler(CallbackQueryHandler(uh.subject_length_selected, pattern=r"^qslen_"))
+    app.add_handler(CallbackQueryHandler(uh.solo_subject_selected, pattern=r"^solosubj_"))
+    app.add_handler(CallbackQueryHandler(uh.solo_length_selected, pattern=r"^sololen_"))
+    app.add_handler(CallbackQueryHandler(uh.duel_subject_selected, pattern=r"^duelsubj_"))
+    app.add_handler(CallbackQueryHandler(uh.duel_length_selected, pattern=r"^duellen_"))
+    app.add_handler(CallbackQueryHandler(uh.duel_accept_callback, pattern=r"^duelaccept_"))
+    app.add_handler(CallbackQueryHandler(uh.duel_decline_callback, pattern=r"^dueldecline_"))
+    app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
+
     app.add_handler(CommandHandler("pushnote", ah.pushnote_cmd))
     app.add_handler(CommandHandler("notelist", ah.notelist_cmd))
     app.add_handler(CallbackQueryHandler(ah.notesend_callback, pattern=r"^notesend_"))
-
-    # ---- Admin: word file upload / export / sample ----
     app.add_handler(CommandHandler("uploadword", ah.uploadword_prompt))
     app.add_handler(CommandHandler("samplefile", ah.samplefile_cmd))
     app.add_handler(CommandHandler("exportquestions", ah.exportquestions_cmd))
     app.add_handler(CommandHandler("deletequestion", ah.deletequestion_cmd))
-
-    # ---- Document routing: docx -> question import, db -> restore, pdf -> cleaner ----
     app.add_handler(MessageHandler(filters.Document.FileExtension("docx"), ah.handle_docx_upload))
     app.add_handler(MessageHandler(filters.Document.FileExtension("db"), ah.handle_db_restore_upload))
     app.add_handler(MessageHandler(filters.Document.PDF, ah.handle_pdf_clean_upload))
 
-    # ---- Admin management ----
     app.add_handler(CommandHandler("addadmin", ah.addadmin_cmd))
     app.add_handler(CommandHandler("removeadmin", ah.removeadmin_cmd))
     app.add_handler(CommandHandler("listadmins", ah.listadmins_cmd))
-
-    # ---- Broadcast / backup / stats ----
-    app.add_handler(CommandHandler("broadcast", ah.broadcast_cmd))
     app.add_handler(CommandHandler("backup", ah.backup_cmd))
     app.add_handler(CommandHandler("restore", ah.restore_cmd))
     app.add_handler(CommandHandler("stats", ah.stats_cmd))
@@ -209,71 +227,40 @@ def build_app():
     app.add_handler(CommandHandler("unban", ah.unban_cmd))
     app.add_handler(CommandHandler("withdrawals", ah.withdrawals_cmd))
     app.add_handler(CommandHandler("setcoinrate", ah.setcoinrate_cmd))
-
-    # ---- Per-group/channel settings (coin rate, negative marking, entry fee) ----
     app.add_handler(CommandHandler("groupsettings", ah.groupsettings_cmd))
     app.add_handler(CommandHandler("setgroupcoin", ah.setgroupcoin_cmd))
     app.add_handler(CommandHandler("setgroupnegative", ah.setgroupnegative_cmd))
     app.add_handler(CommandHandler("setgroupentryfee", ah.setgroupentryfee_cmd))
     app.add_handler(CommandHandler("addgroup", ah.addgroup_cmd))
     app.add_handler(CommandHandler("listgroups", ah.listgroups_cmd))
-
-    # ---- Reactions Bot (auto-react on the bot's own posts) ----
     app.add_handler(CommandHandler("reactions", ah.reactions_cmd))
     app.add_handler(CommandHandler("reactionson", ah.reactionson_cmd))
     app.add_handler(CommandHandler("reactionsoff", ah.reactionsoff_cmd))
     app.add_handler(CommandHandler("setreactionemojis", ah.setreactionemojis_cmd))
-
-    # ---- Visibility/Engagement Booster (pin + scheduled repost + best-time) ----
-    boost_conv = ConversationHandler(
-        entry_points=[CommandHandler("boost", ah.boost_start)],
-        states={
-            ah.ASK_BOOST_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_content)],
-            ah.ASK_BOOST_BUTTON: [MessageHandler(filters.TEXT, ah.boost_button)],
-            ah.ASK_BOOST_SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_schedule)],
-        },
-        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    )
-    app.add_handler(boost_conv)
     app.add_handler(CommandHandler("boostlist", ah.boostlist_cmd))
     app.add_handler(CommandHandler("stopboost", ah.stopboost_cmd))
     app.add_handler(CommandHandler("besttime", ah.besttime_cmd))
-
-    # ---- Group/Channel Directory (self-listed, no scraping) ----
-    dir_conv = ConversationHandler(
-        entry_points=[CommandHandler("adddirectory", ah.adddirectory_start)],
-        states={
-            ah.ASK_DIR_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_title)],
-            ah.ASK_DIR_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_desc)],
-            ah.ASK_DIR_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_category)],
-            ah.ASK_DIR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_link)],
-        },
-        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    )
-    app.add_handler(dir_conv)
     app.add_handler(CommandHandler("removedirectory", ah.removedirectory_cmd))
     app.add_handler(CommandHandler("discover", uh.discover_cmd))
     app.add_handler(CallbackQueryHandler(uh.directory_category_selected, pattern=r"^dircat_"))
     app.add_handler(CallbackQueryHandler(uh.directory_open_entry, pattern=r"^diropen_"))
-
-    # ---- Withdrawal approve/reject callback ----
     app.add_handler(CallbackQueryHandler(ah.withdrawal_action, pattern=r"^w(approve|reject)_"))
 
-    # ---- Visibility Booster: check every 60 seconds for due reposts ----
     if app.job_queue:
         app.job_queue.run_repeating(run_due_boost_jobs, interval=60, first=30)
 
     return app
 
-
 def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable set nahi hai! .env file check karo.")
-
+        
+    # Ye line server ko start karke bot ko zinda rakhegi
+    threading.Thread(target=keep_alive_server, daemon=True).start()
+    
     app = build_app()
     logger.info("Bot start ho raha hai...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == "__main__":
     main()
