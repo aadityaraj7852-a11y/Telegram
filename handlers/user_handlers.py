@@ -22,8 +22,9 @@ from utils.exporters import build_leaderboard_text
 from utils.permissions import is_admin
 from utils.pdf_cleaner import clean_pdf
 
-# New State for PDF Cleaner
+# States
 ASK_PDF = 900
+ASK_SUPPORT = 901
 
 # =========================================================================
 # MAIN MENU (button UI)
@@ -42,10 +43,11 @@ def main_menu_keyboard(user_id):
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
         
-        # Button For PDF Cleaner
-        [InlineKeyboardButton("📄 Clean PDF Links", callback_data="menu_cleanpdf")],
+        # Admin Support & PDF Cleaner
+        [InlineKeyboardButton("📄 Clean PDF Links", callback_data="menu_cleanpdf"),
+         InlineKeyboardButton("💬 Contact Admin", callback_data="menu_support")],
         
-        # Naye App aur Social Media Links yahan add kiye gaye hain
+        # Naye App aur Social Media Links
         [InlineKeyboardButton("📱 Download App", url="https://play.google.com/store/apps/details?id=com.mockrise.learning")],
         [InlineKeyboardButton("📺 Pratibimb Academy", url="https://youtube.com/@pratibimbacademy?si=cMNsJyyE2yHVS_YK"),
          InlineKeyboardButton("📺 Mockrise YouTube", url="https://youtube.com/@mockrise?si=q7YRnoKR0vTVAWX-")],
@@ -68,7 +70,6 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("📢 Broadcast", callback_data="amenu_broadcast"),
          InlineKeyboardButton("📣 Post Ad", callback_data="amenu_postad")],
          
-        # Remote Quiz (Admin Panel se Quiz bhejna - naya feature)
         [InlineKeyboardButton("🚀 Send Quiz to Group", callback_data="amenu_remotequiz")],
          
         [InlineKeyboardButton("📝 Send Note", callback_data="amenu_sendnote"),
@@ -92,6 +93,8 @@ def _back_kb():
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     referred_by = None
+    
+    # Referral check
     if context.args and context.args[0].startswith("ref_"):
         try:
             referred_by = int(context.args[0].replace("ref_", ""))
@@ -101,8 +104,22 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referred_by = None
 
     existing = db.get_user(user.id)
-    db.upsert_user(user.id, user.username, user.first_name, referred_by=referred_by if not existing else None)
+    is_new_user = not bool(existing)
+
+    db.upsert_user(user.id, user.username, user.first_name, referred_by=referred_by if is_new_user else None)
     db.touch_online(user.id)
+
+    # 🚀 REFERRAL REWARD LOGIC (10 Coins)
+    if is_new_user and referred_by:
+        try:
+            db.add_coins(referred_by, 10)
+            await context.bot.send_message(
+                referred_by, 
+                f"🎉 *Badhai ho!* Ek naye user ({user.first_name}) ne aapke link se join kiya hai. Aapko 10 coins mile hain!",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Referral Error: {e}")
 
     if update.effective_chat.type in ("group", "supergroup"):
         db.upsert_group(update.effective_chat.id, update.effective_chat.title)
@@ -112,12 +129,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ==========================================================
     # 🚀 FORCE JOIN CHANNEL LOGIC
-    # ==========================================================
-    if not is_admin(user.id):  # Admins ko bypass karne do
+    if not is_admin(user.id):
         try:
-            # Bot ko @mockrise channel me admin hona zaroori hai!
             member = await context.bot.get_chat_member(chat_id="@mockrise", user_id=user.id)
             if member.status in ["left", "kicked", "banned"]:
                 kb = [[InlineKeyboardButton("📢 Join @mockrise", url="https://t.me/mockrise")],
@@ -129,11 +143,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
                 return
-        except Exception as e:
-            # Agar bot admin nahi hai ya channel nahi mila to error na de kar aage badh jayega
+        except Exception:
             pass
-    # ==========================================================
-
+            
     text = (
         f"👋 Namaste {user.first_name}!\n\n"
         "Main tumhara Quiz Bot hoon 🎯 — quiz khelo, coins kamao, "
@@ -168,16 +180,13 @@ async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/menu — kabhi bhi menu wapas kholne ke liye"""
     await update.message.reply_text(
         "📋 *Main Menu*\nNeeche se koi option chuno:",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(update.effective_user.id)
     )
 
-
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sab 'menu_*' callback buttons ko route karta hai."""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -254,7 +263,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link = f"https://t.me/{bot_username}?start=ref_{query.from_user.id}"
         await query.edit_message_text(
             f"👥 *Referral Program*\n\nApne dost ko is link se invite karo, "
-            f"jab wo bot start karega tumhe 20 coins milenge!\n\n{link}",
+            f"jab wo bot start karega tumhe 10 coins milenge!\n\n{link}",
             parse_mode="Markdown", reply_markup=_back_kb()
         )
         return
@@ -285,6 +294,51 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
+
+
+# =========================================================================
+# CONTACT ADMIN / SUPPORT SYSTEM (NEW)
+# =========================================================================
+async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query: await query.answer()
+    
+    msg = (
+        "💬 *Contact Admin*\n\n"
+        "Aapko jo bhi dikkat hai, apna message yahan type karein.\n"
+        "Aapka message sidha Admin ke paas jayega aur unka reply aapko yahi mil jayega.\n\n"
+        "(Cancel karne ke liye /cancel dabayein)"
+    )
+    if query:
+        await query.edit_message_text(msg, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    return ASK_SUPPORT
+
+async def support_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text
+    
+    owner_msg = (
+        f"📩 **New Support Message**\n"
+        f"👤 User: {user.first_name} (@{user.username or 'N/A'})\n"
+        f"🆔 ID: `{user.id}`\n\n"
+        f"💬 Message:\n{text}\n\n"
+        f"*(Reply dene ke liye is message ko select karke 'Reply' karein)*"
+    )
+    
+    try:
+        await context.bot.send_message(config.OWNER_ID, owner_msg, parse_mode="Markdown")
+        await update.message.reply_text("✅ Aapka message Admin ko bhej diya gaya hai. Kripya reply ka wait karein.", reply_markup=_back_kb())
+    except Exception as e:
+        await update.message.reply_text("❌ Admin ko message bhejte waqt error aayi.")
+        
+    return ConversationHandler.END
+
+async def support_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Support message cancel kar diya gaya. Menu ke liye /menu dabayein.")
+    return ConversationHandler.END
+
 
 # =========================================================================
 # PDF CLEANER (USER FLOW)
@@ -366,7 +420,6 @@ async def _show_subjects(message, edit=False, query=None):
     else:
         await message.reply_text(text, parse_mode="Markdown")
 
-
 def _myscore_text(user_id):
     u = db.get_user(user_id)
     if not u:
@@ -382,7 +435,6 @@ def _myscore_text(user_id):
         f"🪙 Coins: {u['coins']}\n"
     )
 
-
 def _history_text(user_id):
     rows = db.get_user_history(user_id, limit=10)
     if not rows:
@@ -392,43 +444,6 @@ def _history_text(user_id):
         date_str = time.strftime("%d-%b-%Y %H:%M", time.localtime(r["started_at"]))
         lines.append(f"• {date_str} | {r['chat_title']} | ✅{r['correct']} ❌{r['wrong']} | 🪙{r['coins_earned']}")
     return "\n".join(lines)
-
-
-def _lounge_link_for(user_id, first_name):
-    url = config.WEBAPP_PUBLIC_URL
-    if not url:
-        return None
-    u = db.get_user(user_id)
-    display_name = (u["first_name"] if u else first_name) or "Student"
-    import secrets
-    token = secrets.token_urlsafe(24)
-    db.upsert_chat_app_user(user_id, display_name, "🎓", token)
-    return f"{url.rstrip('/')}/chat?token={token}"
-
-
-async def _send_lounge_link_query(query, context):
-    link = _lounge_link_for(query.from_user.id, query.from_user.first_name)
-    if not link:
-        await query.edit_message_text(
-            "💬 Students Lounge abhi set up nahi hui hai. Owner ko `WEBAPP_PUBLIC_URL` "
-            "environment variable set karne ko kaho.",
-            reply_markup=_back_kb()
-        )
-        return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Lounge Kholo", url=link)],
-        [InlineKeyboardButton("⬅️ Menu", callback_data="menu_back")],
-    ])
-    await query.edit_message_text(
-        "💬 *Students Lounge*\n\nYe ek group chat hai jaha sab students "
-        "aapas me baat kar sakte hain. Neeche button dabao (link personal hai, share mat karna):",
-        parse_mode="Markdown", reply_markup=keyboard
-    )
-
-
-# =========================================================================
-# HELP
-# =========================================================================
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -486,11 +501,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setcoinrate <amount> — Global coin rate\n"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
-
-
-# =========================================================================
-# GROUP QUIZ (NEW INSTANT RANDOM MIXED FLOW)
-# =========================================================================
 
 async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -573,11 +583,6 @@ async def subject_length_selected(update: Update, context: ContextTypes.DEFAULT_
     chat = query.message.chat
     await quiz_engine.start_quiz_session(context, chat.id, chat.title, subject_id, None, query.from_user.id, num, 15)
 
-
-# =========================================================================
-# SOLO PRACTICE + 1v1 DUEL (private chat)
-# =========================================================================
-
 async def solo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         await update.message.reply_text("🧠 Solo practice sirf mere private chat me hoti hai. Mujhe DM karo!")
@@ -592,7 +597,6 @@ async def solo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(s["name"], callback_data=f"solosubj_{s['subject_id']}")] for s in subjects]
     await update.message.reply_text("📚 Practice ke liye Subject chuno:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def _send_mode_subject_picker(query):
     subjects = db.get_subjects()
     if len(subjects) < getattr(config, 'MIN_SUBJECTS_FOR_SOLO', 1):
@@ -606,7 +610,6 @@ async def _send_mode_subject_picker(query):
     keyboard.append([InlineKeyboardButton("⬅️ Menu", callback_data="menu_back")])
     await query.edit_message_text("📚 Practice ke liye Subject chuno:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def solo_subject_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -617,7 +620,6 @@ async def solo_subject_selected(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton("20 Questions", callback_data=f"sololen_{subject_id}_20")],
     ]
     await query.edit_message_text("🔢 Kitne questions?", reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def solo_length_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -630,7 +632,6 @@ async def solo_length_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         context, query.message.chat.id, query.from_user.id, query.from_user.id,
         subject_id, None, num
     )
-
 
 async def challenge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
@@ -674,7 +675,6 @@ async def challenge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
 async def duel_subject_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -684,7 +684,6 @@ async def duel_subject_selected(update: Update, context: ContextTypes.DEFAULT_TY
          InlineKeyboardButton("10 Questions", callback_data=f"duellen_{opponent_id}_{subject_id}_10")],
     ]
     await query.edit_message_text("🔢 Kitne questions?", reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def duel_length_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -710,7 +709,6 @@ async def duel_length_selected(update: Update, context: ContextTypes.DEFAULT_TYP
             "❌ Challenge deliver nahi ho paya (ho sakta hai us user ne bot ko block kar rakha ho)."
         )
 
-
 async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -726,7 +724,6 @@ async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await quiz_engine.start_duel(context, challenger_id, challenger_id, query.from_user.id, subject_id, None, num)
     await quiz_engine.start_duel(context, query.from_user.id, challenger_id, query.from_user.id, subject_id, None, num)
 
-
 async def duel_decline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -736,11 +733,6 @@ async def duel_decline_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await context.bot.send_message(challenger_id, f"❌ {query.from_user.first_name} ne tumhara challenge decline kar diya.")
     except Exception:
         pass
-
-
-# =========================================================================
-# LEADERBOARD / SCORE / HISTORY / WALLET / REFERRAL / WITHDRAW / SUBJECTS
-# =========================================================================
 
 async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = db.leaderboard(limit=10)
@@ -769,7 +761,7 @@ async def referral_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/{bot_username}?start=ref_{update.effective_user.id}"
     await update.message.reply_text(
         f"👥 *Referral Program*\n\nApne dost ko is link se invite karo, "
-        f"jab wo bot start karega tumhe 20 coins milenge!\n\n{link}",
+        f"jab wo bot start karega tumhe 10 coins milenge!\n\n{link}",
         parse_mode="Markdown"
     )
 
@@ -802,24 +794,6 @@ async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def subjects_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_subjects(update.message)
-
-async def lounge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Students discussion group ka personal access link deta hai."""
-    link = _lounge_link_for(update.effective_user.id, update.effective_user.first_name)
-    if not link:
-        await update.message.reply_text("💬 Students Lounge abhi set up nahi hui hai.")
-        return
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Lounge Kholo", url=link)]])
-    await update.message.reply_text(
-        "💬 *Students Lounge*\n\nSab students ke saath baat karo.\n"
-        "(Ye link personal hai, kisi ko mat dena)",
-        parse_mode="Markdown", reply_markup=keyboard
-    )
-
-
-# =========================================================================
-# GROUP/CHANNEL DIRECTORY (browse — admin-listed entries only)
-# =========================================================================
 
 async def discover_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     categories = db.get_directory_categories()
