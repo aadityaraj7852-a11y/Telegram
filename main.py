@@ -86,9 +86,7 @@ async def admin_menu_router(update: Update, context):
     query = update.callback_query
     await query.answer()
     hints = {
-        "amenu_groupsettings": "⚙️ Group settings dekhne ke liye bot ko apne group me add karein aur wahan likho:\n/groupsettings",
         "amenu_reactions": "😀 Reactions Bot set karne ke liye us group me likho:\n/reactions",
-        "amenu_boost": "🚀 Post ko boost (pin + scheduled repost) karne ke liye us group me likho:\n/boost\n\nActive boosts dekhne ke liye:\n/boostlist",
     }
     text = hints.get(query.data, "Command available nahi hai.")
     await query.edit_message_text(text, reply_markup=uh._back_kb())
@@ -117,9 +115,7 @@ def build_app():
     
     app.add_handler(CallbackQueryHandler(uh.check_join_callback, pattern=r"^check_join$"))
 
-    # ==============================================================
-    # 📩 SUPPORT SYSTEM (USER TO ADMIN)
-    # ==============================================================
+    # 📩 SUPPORT SYSTEM
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(uh.support_start, pattern=r"^menu_support$"), CommandHandler("support", uh.support_start)],
         states={
@@ -129,10 +125,10 @@ def build_app():
         allow_reentry=True
     ))
 
-    # 👨‍💻 ADMIN REPLY TO USER
+    # 👨‍💻 ADMIN REPLY
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, ah.owner_reply_handler))
-    # ==============================================================
 
+    # 📄 CLEAN PDF
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(uh.cleanpdf_start, pattern=r"^menu_cleanpdf$"), CommandHandler("cleanpdf", uh.cleanpdf_start)],
         states={
@@ -146,6 +142,9 @@ def build_app():
     app.add_handler(CallbackQueryHandler(quiz_engine.handle_ready_callback, pattern=r"^ready_"))
     app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
 
+    # --------------------------------------------------------
+    # ADVANCED ADMIN CONVERSATIONS
+    # --------------------------------------------------------
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(ah.admin_add_start, pattern=r"^admin_add_btn$")],
         states={
@@ -187,7 +186,50 @@ def build_app():
             ah.ASK_QUIZ_GROUP_CHAP: [CallbackQueryHandler(ah.sendquiz_group_chap, pattern=r"^sqsubj_")],
             ah.ASK_QUIZ_GROUP_TIMER: [CallbackQueryHandler(ah.sendquiz_group_timer, pattern=r"^sqchap_")],
             ah.ASK_QUIZ_GROUP_COUNT: [CallbackQueryHandler(ah.sendquiz_group_count, pattern=r"^sqtime_")],
-            ah.ASK_QUIZ_GROUP_CONFIRM: [CallbackQueryHandler(ah.sendquiz_group_confirm, pattern=r"^sqlen_")]
+            ah.ASK_QUIZ_GROUP_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.sendquiz_group_confirm)]
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
+    ))
+
+    # ✏️ EDIT QUESTION FLOW
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(ah.editq_start, pattern=r"^amenu_editq$")],
+        states={
+            ah.ASK_EDIT_Q_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.editq_search)],
+            ah.ASK_EDIT_Q_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.editq_receive_value)],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
+    ))
+    
+    app.add_handler(CallbackQueryHandler(ah.editq_select_action, pattern=r"^eqsel_"))
+    app.add_handler(CallbackQueryHandler(ah.editq_field_action, pattern=r"^eqdo_"))
+
+    # ⚙️ GROUP SETTINGS DM FLOW
+    app.add_handler(ConversationHandler(
+        entry_points=[
+            CommandHandler("groupsettings", ah.groupsettings_start_dm),
+            CallbackQueryHandler(ah.groupsettings_start_dm, pattern=r"^amenu_groupsettings$")
+        ],
+        states={
+            ah.ASK_GSET_COINS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.groupsettings_coin_receive)],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
+    ))
+    app.add_handler(CallbackQueryHandler(ah.groupsettings_action, pattern=r"^gset_"))
+    app.add_handler(CallbackQueryHandler(ah.groupsettings_coin_prompt, pattern=r"^gsetc_"))
+
+
+    # 🚀 BOOST SYSTEM DM FLOW
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("boost", ah.boost_start), CallbackQueryHandler(ah.boost_start, pattern=r"^amenu_boost$")],
+        states={
+            ah.ASK_BOOST_GROUP: [CallbackQueryHandler(ah.boost_group_select, pattern=r"^bgrp_")],
+            ah.ASK_BOOST_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_content)],
+            ah.ASK_BOOST_BUTTON: [MessageHandler(filters.TEXT, ah.boost_button)],
+            ah.ASK_BOOST_SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_schedule)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
         allow_reentry=True
@@ -247,17 +289,6 @@ def build_app():
         allow_reentry=True
     ))
 
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("boost", ah.boost_start)],
-        states={
-            ah.ASK_BOOST_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_content)],
-            ah.ASK_BOOST_BUTTON: [MessageHandler(filters.TEXT, ah.boost_button)],
-            ah.ASK_BOOST_SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_schedule)],
-        },
-        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-        allow_reentry=True
-    ))
-
     app.add_handler(CallbackQueryHandler(admin_menu_router, pattern=r"^amenu_"))
 
     app.add_handler(CallbackQueryHandler(uh.subject_selected, pattern=r"^qsubj_"))
@@ -285,6 +316,10 @@ def build_app():
     app.add_handler(CommandHandler("addadmin", ah.addadmin_cmd))
     app.add_handler(CommandHandler("removeadmin", ah.removeadmin_cmd))
     app.add_handler(CommandHandler("listadmins", ah.listadmins_cmd))
+    
+    app.add_handler(CommandHandler("boostlist", ah.boostlist_cmd))
+    app.add_handler(CommandHandler("stopboost", ah.stopboost_cmd))
+    
     app.add_handler(CommandHandler("backup", ah.backup_cmd))
     app.add_handler(CommandHandler("restore", ah.restore_cmd))
     app.add_handler(CommandHandler("stats", ah.stats_cmd))
@@ -293,8 +328,6 @@ def build_app():
     app.add_handler(CommandHandler("unban", ah.unban_cmd))
     app.add_handler(CommandHandler("withdrawals", ah.withdrawals_cmd))
     app.add_handler(CommandHandler("setcoinrate", ah.setcoinrate_cmd))
-    app.add_handler(CommandHandler("groupsettings", ah.groupsettings_cmd))
-    app.add_handler(CommandHandler("setgroupcoin", ah.setgroupcoin_cmd))
     app.add_handler(CommandHandler("setgroupnegative", ah.setgroupnegative_cmd))
     app.add_handler(CommandHandler("setgroupentryfee", ah.setgroupentryfee_cmd))
     
