@@ -185,96 +185,106 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
         if chat_id not in active_quizzes or not active_quizzes[chat_id]["running"]: 
             break
         
-        # 🧹 QUESTION SANITIZE
-        raw_q = str(q.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
-        clean_q = re.sub(r'<[^>]+>', '', raw_q).strip()
-        if len(clean_q) > 280:
-            clean_q = clean_q[:277] + "..."
-        question_text = f"Q{idx+1}/{len(questions)}: {clean_q}"
+        # ⚠️ GIANT TRY-EXCEPT BLOCK: Never let the loop crash!
+        try:
+            # 🧹 QUESTION SANITIZE
+            raw_q = str(q.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
+            clean_q = re.sub(r'<[^>]+>', '', raw_q).strip()
+            if not clean_q: 
+                clean_q = "Question"
+            if len(clean_q) > 280:
+                clean_q = clean_q[:277] + "..."
+            question_text = f"Q{idx+1}/{len(questions)}: {clean_q}"
 
-        # 🛠 OPTIONS SAFE PARSING
-        raw_opts = q.get("options", [])
-        if isinstance(raw_opts, str):
-            try:
-                raw_opts = json.loads(raw_opts)
-            except Exception:
+            # 🛠 OPTIONS SAFE PARSING
+            raw_opts = q.get("options", [])
+            if isinstance(raw_opts, str):
                 try:
-                    raw_opts = ast.literal_eval(raw_opts)
+                    raw_opts = json.loads(raw_opts)
                 except Exception:
-                    raw_opts = [o.strip() for o in raw_opts.split("\n") if o.strip()]
+                    try:
+                        raw_opts = ast.literal_eval(raw_opts)
+                    except Exception:
+                        raw_opts = [o.strip() for o in raw_opts.split("\n") if o.strip()]
 
-        clean_opts = []
-        if isinstance(raw_opts, list):
-            for opt in raw_opts:
-                opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
-                if len(opt_str) > 100:
-                    opt_str = opt_str[:97] + "..."
-                if opt_str:
-                    clean_opts.append(opt_str)
+            clean_opts = []
+            if isinstance(raw_opts, list):
+                for opt in raw_opts:
+                    opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
+                    if len(opt_str) > 100:
+                        opt_str = opt_str[:97] + "..."
+                    if opt_str:
+                        clean_opts.append(opt_str)
 
-        while len(clean_opts) < 2:
-            clean_opts.append(f"Option {len(clean_opts)+1}")
-        clean_opts = clean_opts[:10]
+            while len(clean_opts) < 2:
+                clean_opts.append(f"Option {len(clean_opts)+1}")
+            clean_opts = clean_opts[:10]
 
-        # 🛠 CORRECT INDEX SAFE BOUNDING
-        correct_idx = q.get("correct_index", 0)
-        try:
-            correct_idx = int(correct_idx)
-        except:
-            correct_idx = 0
-        correct_idx = max(0, min(correct_idx, len(clean_opts) - 1))
+            # 🛠 CORRECT INDEX SAFE BOUNDING
+            correct_idx = q.get("correct_index", 0)
+            try:
+                correct_idx = int(correct_idx)
+            except:
+                correct_idx = 0
+            correct_idx = max(0, min(correct_idx, len(clean_opts) - 1))
 
-        # 🧹 EXPLANATION SANITIZE
-        raw_exp = str(q.get("explanation", "")).replace("<br>", "\n").replace("<br/>", "\n")
-        clean_exp = re.sub(r'<[^>]+>', '', raw_exp).strip()
+            # 🧹 EXPLANATION SANITIZE
+            raw_exp = str(q.get("explanation", "")).replace("<br>", "\n").replace("<br/>", "\n")
+            clean_exp = re.sub(r'<[^>]+>', '', raw_exp).strip()
 
-        try:
-            # Telegram Poll Send Target
-            poll_msg = await context.bot.send_poll(
-                chat_id=chat_id, 
-                question=question_text, 
-                options=clean_opts,
-                type="quiz", 
-                correct_option_id=correct_idx, 
-                explanation=clean_exp[:197] + "..." if len(clean_exp) > 200 else (clean_exp if clean_exp else None),
-                open_period=timer, 
-                is_anonymous=False
-            )
-            
-            active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
-            active_quizzes[chat_id]["correct_idx"] = correct_idx
-            
-            # ⏱ Wait for the timer to finish
-            await asyncio.sleep(timer + 1)
-            
-            # 💡 EXPLANATION AFTER TIMER ENDS
-            if clean_exp:
-                exp_text = f"💡 *Q{idx+1} व्याख्या (Explanation):*\n_{clean_exp}_"
-                if len(exp_text) > 4000: exp_text = exp_text[:4000]
-                await context.bot.send_message(chat_id, exp_text, parse_mode="Markdown")
-                await asyncio.sleep(1.5) 
-            
-        except Exception as e:
-            logger.error(f"Poll creation failed for Q{idx+1}: {e}")
-            # 🚀 BULLETPROOF FALLBACK: If poll fails, send as Text Message
-            q_fallback = f"❓ *{question_text}*\n\n"
-            opts_text = ""
-            for i, o in enumerate(clean_opts):
-                opts_text += f"{chr(65+i)}. {o}\n"
-            
-            await context.bot.send_message(chat_id, f"{q_fallback}{opts_text}", parse_mode="HTML")
-            
-            # Wait for the timer so users can read it
-            await asyncio.sleep(timer)
-            
-            # Send the answer via Spoiler
-            ans_letter = chr(65+correct_idx)
-            sol_fallback = f"💡 <b>सही उत्तर: {ans_letter}</b>\n"
-            if clean_exp:
-                sol_fallback += f"<tg-spoiler>{clean_exp}</tg-spoiler>"
+            try:
+                # 📡 ATTEMPT 1: SEND NATIVE TELEGRAM POLL
+                poll_msg = await context.bot.send_poll(
+                    chat_id=chat_id, 
+                    question=question_text, 
+                    options=clean_opts,
+                    type="quiz", 
+                    correct_option_id=correct_idx, 
+                    explanation=clean_exp[:197] + "..." if len(clean_exp) > 200 else (clean_exp if clean_exp else None),
+                    open_period=timer, 
+                    is_anonymous=False
+                )
                 
-            await context.bot.send_message(chat_id, sol_fallback, parse_mode="HTML")
-            await asyncio.sleep(1.5)
+                active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
+                active_quizzes[chat_id]["correct_idx"] = correct_idx
+                
+                # ⏱ Wait for timer
+                await asyncio.sleep(timer + 1)
+                
+                # 💡 SEND FULL EXPLANATION AFTER TIMER
+                if clean_exp:
+                    exp_text = f"💡 Q{idx+1} व्याख्या (Explanation):\n{clean_exp[:3900]}"
+                    try:
+                        await context.bot.send_message(chat_id, exp_text)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.5) 
+                
+            except Exception as e:
+                logger.error(f"Poll creation failed for Q{idx+1}: {e}")
+                # 🚀 ATTEMPT 2: BULLETPROOF FALLBACK (If Poll Fails)
+                try:
+                    opts_text = "\n".join([f"{chr(65+i)}. {o}" for i, o in enumerate(clean_opts)])
+                    # NO PARSE MODE - To prevent entity parsing crashes!
+                    await context.bot.send_message(chat_id, f"❓ {question_text}\n\n{opts_text}")
+                    
+                    await asyncio.sleep(timer)
+                    
+                    ans_letter = chr(65+correct_idx)
+                    sol_fallback = f"💡 सही उत्तर (Correct Answer): {ans_letter}\n"
+                    if clean_exp:
+                        sol_fallback += f"\nव्याख्या (Explanation):\n{clean_exp[:3900]}"
+                        
+                    await context.bot.send_message(chat_id, sol_fallback)
+                    await asyncio.sleep(1.5)
+                except Exception as inner_e:
+                    logger.error(f"Fallback also failed: {inner_e}")
+                    await context.bot.send_message(chat_id, f"⚠️ Q{idx+1} लोड नहीं हो सका। अगले प्रश्न पर जा रहे हैं...")
+                    await asyncio.sleep(2)
+
+        except Exception as giant_e:
+            logger.error(f"Giant Try-Except Block Caught Error: {giant_e}")
+            await asyncio.sleep(1)
 
     # Jab saare sawaal khatam ho jayein
     if chat_id in active_quizzes:
