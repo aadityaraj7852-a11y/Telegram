@@ -277,35 +277,40 @@ async def sendquiz_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ASK_QUIZ_GROUP_CHAP
 
 # --- JSON Logic for Channels ---
-async def sendquiz_receive_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def sendquiz_receive_json_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
-    if text.lower() == "/done":
-        json_data = context.user_data.get("json_buffer", "").strip()
-        try:
-            # Auto-fixing broken JSON (missing brackets or concatenated arrays)
-            if not json_data.startswith('['): json_data = '[' + json_data
-            if not json_data.endswith(']'): json_data = json_data + ']'
-            json_data = re.sub(r'\]\s*\[', ',', json_data)
-            
-            parsed_json = json.loads(json_data)
-            if not isinstance(parsed_json, list):
-                raise ValueError("JSON array list [] format me hona chahiye.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein (Purana code clear kar diya gaya hai).")
-            context.user_data["json_buffer"] = ""
-            return ASK_QUIZ_JSON
-            
-        channel_id = context.user_data.get("squiz_chat_id")
-        await update.message.reply_text(f"✅ Successfully parsed {len(parsed_json)} questions!\n🚀 Channel me quiz bhejna shuru ho gaya hai. (Har question ke beech 30s ka gap hoga).")
-        
-        asyncio.create_task(process_channel_json_quiz(context, channel_id, parsed_json, update.effective_user.id))
-        context.user_data.clear()
-        return ConversationHandler.END
-    else:
-        context.user_data["json_buffer"] = context.user_data.get("json_buffer", "") + text
-        await update.message.reply_text("✅ Code added. Agar aur code bacha hai to paste karein, warna `/done` likhein.")
+    context.user_data["json_buffer"] = context.user_data.get("json_buffer", "") + text
+    await update.message.reply_text("✅ Code added. Agar aur code bacha hai to paste karein, warna `/done` likhein.")
+    return ASK_QUIZ_JSON
+
+async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    json_data = context.user_data.get("json_buffer", "").strip()
+    if not json_data:
+        await update.message.reply_text("❌ Aapne koi JSON data nahi diya. Kripya JSON paste karein.")
         return ASK_QUIZ_JSON
+
+    try:
+        # Fixing Broken Arrays if user pastes multiple JSON chunks:
+        if not json_data.startswith('['): json_data = '[' + json_data
+        if not json_data.endswith(']'): json_data = json_data + ']'
+        json_data = re.sub(r'\]\s*\[', ',', json_data)
+        
+        parsed_json = json.loads(json_data)
+        if not isinstance(parsed_json, list):
+            raise ValueError("JSON array list [] format me hona chahiye.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein (Purana code clear kar diya gaya hai).")
+        context.user_data["json_buffer"] = ""
+        return ASK_QUIZ_JSON
+        
+    channel_id = context.user_data.get("squiz_chat_id")
+    await update.message.reply_text(f"✅ Successfully parsed {len(parsed_json)} questions!\n🚀 Channel me quiz bhejna shuru ho gaya hai. (Har question ke beech 30s ka gap hoga).")
+    
+    asyncio.create_task(process_channel_json_quiz(context, channel_id, parsed_json, update.effective_user.id))
+    context.user_data.clear()
+    return ConversationHandler.END
+
 
 async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
     sent = 0
@@ -715,109 +720,6 @@ async def addgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.upsert_group(chat_id, f"Group {chat_id}")
     db.register_group_settings(chat_id, update.effective_user.id)
     await update.effective_message.reply_text("✅ Group add ho gaya.")
-
-# ---------------- HTML NOTES (AUTO PUSH WITH BUTTONS) ----------------
-async def sendnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📝 Note ka title likho:\n(Cancel ke liye /cancel)")
-    return ASK_NOTE_TITLE
-
-async def sendnote_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["note_title"] = update.message.text.strip()
-    await update.effective_message.reply_text("✍️ Ab HTML note ka content likho:")
-    return ASK_NOTE_CONTENT
-
-async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    title = context.user_data.get("note_title", "Note")
-    note_id = db.save_note(title, update.message.text, update.effective_user.id)
-    clean_html = sanitize_for_telegram(update.message.text)
-    
-    for chunk in chunk_message(f"<b>{title}</b>\n\n{clean_html}"):
-        try: await update.effective_message.reply_text(chunk, parse_mode="HTML")
-        except: await update.effective_message.reply_text(re.sub(r"<[^>]+>", "", chunk))
-        
-    groups = db.get_active_groups()
-    if not groups:
-        await update.effective_message.reply_text("✅ Note ban gaya! (Lekin koi group/channel list me nahi hai.)")
-    else:
-        kb = [[InlineKeyboardButton(g['title'], callback_data=f"pushnote_{note_id}_{g['chat_id']}")] for g in groups]
-        kb.append([InlineKeyboardButton("❌ Cancel", callback_data="pushnote_cancel")])
-        await update.effective_message.reply_text("✅ Note ban gaya! **Kahan bhejna hai? Niche button dabayein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if len(context.args) < 2 or not context.args[0].isdigit(): return
-    note = db.get_note(int(context.args[0]))
-    if not note: return
-    try: chat_id = int(context.args[1])
-    except ValueError: return
-    clean_html = sanitize_for_telegram(note["content_html"])
-    try:
-        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
-            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
-        await update.effective_message.reply_text("✅ Note bhej diya gaya.")
-    except Exception as e:
-        await update.effective_message.reply_text(f"❌ Error: {e}")
-
-async def pushnote_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id): return
-    
-    data = query.data
-    if data == "pushnote_cancel":
-        await query.edit_message_text("❌ Cancelled.")
-        return
-        
-    _, note_id, chat_id = data.split("_", 2)
-    note = db.get_note(int(note_id))
-    if not note: 
-        await query.edit_message_text("❌ Note nahi mila.")
-        return
-        
-    clean_html = sanitize_for_telegram(note["content_html"])
-    try:
-        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
-            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
-        await query.edit_message_text("✅ Note successfully bhej diya gaya!")
-    except Exception as e:
-        await query.edit_message_text(f"❌ Error sending note: {e}")
-
-async def notelist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    notes = db.get_notes()
-    if not notes:
-        await update.effective_message.reply_text("Koi note nahi hai.")
-        return
-        
-    lines = ["📚 *Saved Notes:*\n"]
-    for n in notes:
-        lines.append(f"• #{n['note_id']} — {n['title']}")
-        
-    kb = []
-    for n in notes:
-        kb.append([InlineKeyboardButton(f"Send: {n['title'][:20]}", callback_data=f"notesend_{n['note_id']}")])
-        
-    await update.effective_message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-async def notesend_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id): return
-    
-    note_id = query.data.split('_')[1]
-    groups = db.get_active_groups()
-    if not groups:
-         await query.message.reply_text("❌ Koi group/channel list me nahi hai.")
-         return
-         
-    kb = [[InlineKeyboardButton(g['title'], callback_data=f"pushnote_{note_id}_{g['chat_id']}")] for g in groups]
-    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="pushnote_cancel")])
-    await query.message.reply_text("🎯 **Is note ko kahan bhejna hai? Target Choose Karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def reactions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
