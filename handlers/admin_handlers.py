@@ -10,16 +10,19 @@ import json
 import asyncio
 import random
 import logging
+import sqlite3
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 import database as db
 import config
+import quiz_engine
 from utils.permissions import require_admin, require_owner, is_admin, is_owner
 from utils.docx_parser import parse_docx, validate_parsed
 from utils.exporters import make_sample_template, export_questions_to_docx
 from utils.html_notes import sanitize_for_telegram, chunk_message
+from database import DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -27,26 +30,55 @@ logger = logging.getLogger(__name__)
 ASK_SUBJECT, ASK_CHAPTER, ASK_DOCX_FILE = range(3)
 ASK_AD_CONTENT, ASK_AD_BUTTON = range(100, 102)
 ASK_NOTE_TITLE, ASK_NOTE_CONTENT = range(200, 202)
-ASK_GROUP_ID, ASK_GROUP_COINRATE, ASK_GROUP_NEGATIVE, ASK_GROUP_ENTRYFEE = range(300, 304)
 
-# 🔥 BOOST STATES UPDATED
+# BOOST STATES 
 ASK_BOOST_GROUP = 404
 ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
 
 ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
 
-# New Advanced States
 ASK_ADMIN_ID_ADD, ASK_ADMIN_GROUP, ASK_ADMIN_RIGHTS = range(700, 703)
 ASK_ADMIN_ID_REMOVE = 704
 ASK_BROADCAST_TARGET, ASK_BROADCAST_MSG = range(710, 712)
 ASK_QUIZ_DEST_TYPE, ASK_QUIZ_JSON, ASK_QUIZ_GROUP_CHAP, ASK_QUIZ_GROUP_TIMER, ASK_QUIZ_GROUP_COUNT, ASK_QUIZ_GROUP_CONFIRM = range(800, 806)
 
+# EDIT QUESTION STATES
+ASK_EDIT_Q_SEARCH = 900
+ASK_EDIT_Q_VALUE = 901
+
+# GROUP SETTINGS DM STATE
+ASK_GSET_COINS = 950
+
+
+# --- DB Helper for Editing Questions safely ---
+def update_question_db(q_id, field, value):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(f"UPDATE questions SET {field} = ? WHERE question_id = ?", (value, q_id))
+    conn.commit()
+    conn.close()
+
+
+async def check_admin(update: Update):
+    if update.callback_query:
+        if not is_admin(update.effective_user.id):
+            await update.callback_query.answer("⛔ Sirf Admin ke liye.", show_alert=True)
+            return False
+        return True
+    return await require_admin(update)
+
+async def check_owner(update: Update):
+    if update.callback_query:
+        if not is_owner(update.effective_user.id):
+            await update.callback_query.answer("⛔ Sirf Owner ke liye.", show_alert=True)
+            return False
+        return True
+    return await require_owner(update)
 
 # =========================================================================
-# 💬 ADMIN REPLY HANDLER (Owner Reply to Support Ticket)
+# 💬 ADMIN REPLY HANDLER
 # =========================================================================
 async def owner_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Jab Admin support message par 'Reply' karta hai, to user ko wapas jayega"""
     if not update.message.reply_to_message: return
     if not is_admin(update.effective_user.id): return
 
@@ -70,25 +102,10 @@ async def owner_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("✅ Reply successfully sent to user!")
     except Exception as e:
         await update.message.reply_text(f"❌ Reply bhejne me error aayi: {e}")
+
 # =========================================================================
-
-
-async def check_admin(update: Update):
-    if update.callback_query:
-        if not is_admin(update.effective_user.id):
-            await update.callback_query.answer("⛔ Sirf Admin ke liye.", show_alert=True)
-            return False
-        return True
-    return await require_admin(update)
-
-async def check_owner(update: Update):
-    if update.callback_query:
-        if not is_owner(update.effective_user.id):
-            await update.callback_query.answer("⛔ Sirf Owner ke liye.", show_alert=True)
-            return False
-        return True
-    return await require_owner(update)
-
+# 1. ADVANCED ADMIN MANAGEMENT
+# =========================================================================
 async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -100,6 +117,9 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_owner(update.effective_user.id):
         keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
                          InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
+    
+    # ✏️ NEW BUTTON: EDIT QUESTION IN ADMIN MENU
+    keyboard.append([InlineKeyboardButton("✏️ Edit Question", callback_data="amenu_editq")])
     keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -108,6 +128,7 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
+# ... [Admin Add/Remove Logic remains unchanged] ...
 async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_owner(update): return ConversationHandler.END
@@ -133,15 +154,8 @@ async def admin_add_rights(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     rights = query.data.split("_")[1]
     admin_input = context.user_data.get("new_admin_id", "")
-    
-    uid = 0
-    if admin_input.isdigit(): 
-        uid = int(admin_input)
-    else: 
-        uid = random.randint(100000, 999999) 
-
+    uid = int(admin_input) if admin_input.isdigit() else random.randint(100000, 999999) 
     db.add_admin(uid, query.from_user.id) 
-    
     await query.edit_message_text(
         f"✅ *Admin Successfully Added!*\n\n"
         f"👤 ID/Username: {admin_input}\n"
@@ -170,23 +184,139 @@ async def admin_rem_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_owner(update): return
-    if not context.args or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /addadmin <user_id>")
-        return
+    if not context.args or not context.args[0].isdigit(): return
     db.add_admin(int(context.args[0]), update.effective_user.id)
     await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin hai.")
 
 async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_owner(update): return
-    if not context.args or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /removeadmin <user_id>")
-        return
+    if not context.args or not context.args[0].isdigit(): return
     db.remove_admin(int(context.args[0]))
     await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin nahi hai.")
 
 async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await manage_admins_menu(update, context)
 
+
+# =========================================================================
+# ✏️ EDIT QUESTION SYSTEM (NEW)
+# =========================================================================
+async def editq_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query: await query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    
+    text = "✏️ *Edit Question*\n\nKis sawal ko edit karna hai? Uska thoda sa text ya koi shabd likh kar bhejein:\n(Cancel karne ke liye /cancel)"
+    if query: await query.edit_message_text(text, parse_mode="Markdown")
+    else: await update.message.reply_text(text, parse_mode="Markdown")
+    return ASK_EDIT_Q_SEARCH
+
+async def editq_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    term = update.message.text.strip().lower()
+    all_q = db.get_questions()
+    matches = [q for q in all_q if term in q['question'].lower()]
+    
+    if not matches:
+        await update.message.reply_text("❌ Is shabd se koi sawal nahi mila. Kuch aur likhein ya /cancel dabayein.")
+        return ASK_EDIT_Q_SEARCH
+
+    kb = []
+    for q in matches[:10]: # Top 10 matches dikhayega
+        short_q = q['question'][:30].replace('\n', ' ') + "..."
+        kb.append([InlineKeyboardButton(short_q, callback_data=f"eqsel_{q['question_id']}")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")])
+    
+    await update.message.reply_text(f"🔍 {len(matches)} sawal mile hain (Top 10 dikha raha hoon). Kise edit karna hai?", reply_markup=InlineKeyboardMarkup(kb))
+    return ConversationHandler.END
+
+async def editq_select_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    q_id = int(query.data.split("_")[1])
+    all_q = db.get_questions()
+    selected_q = next((q for q in all_q if q['question_id'] == q_id), None)
+    
+    if not selected_q:
+        await query.edit_message_text("❌ Sawal nahi mila.")
+        return
+        
+    opts = "\n".join(json.loads(selected_q['options'])) if isinstance(selected_q['options'], str) else "\n".join(selected_q['options'])
+    
+    text = (
+        f"📝 *Question Details:*\n\n"
+        f"❓ *Sawal:* {selected_q['question']}\n\n"
+        f"📋 *Options:*\n{opts}\n\n"
+        f"✅ *Sahi Jawab (Index):* {selected_q['correct_index']}\n"
+        f"💡 *Vyakhya:* {selected_q.get('explanation', 'N/A')}\n\n"
+        f"Aap isme se kya badalna chahte hain?"
+    )
+    
+    kb = [
+        [InlineKeyboardButton("✏️ Edit Question Text", callback_data=f"eqdo_q_{q_id}")],
+        [InlineKeyboardButton("✏️ Edit Options", callback_data=f"eqdo_o_{q_id}")],
+        [InlineKeyboardButton("✏️ Edit Correct Answer", callback_data=f"eqdo_a_{q_id}")],
+        [InlineKeyboardButton("✏️ Edit Explanation", callback_data=f"eqdo_e_{q_id}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="amenu_editq")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def editq_field_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    _, field_type, q_id = query.data.split("_")
+    context.user_data['edit_q_id'] = int(q_id)
+    context.user_data['edit_q_field'] = field_type
+    
+    prompts = {
+        'q': "❓ Naya Sawal (Question Text) likh kar bhejein:",
+        'o': "📋 Naye Options likh kar bhejein. Har option nayi line me hona chahiye:\nJaise:\nOption A\nOption B\nOption C\nOption D",
+        'a': "✅ Sahi Jawab ka Index bhejein (0, 1, 2, 3 me se):\n(Dhyan rahe, pehla option 0 hota hai, dusra 1, aadi)",
+        'e': "💡 Nayi Vyakhya (Explanation) likh kar bhejein:"
+    }
+    
+    await query.edit_message_text(f"{prompts[field_type]}\n\n(Cancel karne ke liye /cancel)", parse_mode="Markdown")
+    # To avoid making another complex ConversationHandler just for edit, we reuse the state machine
+    # We will need to map this in main.py
+    
+# Actually, since it's hard to dynamically insert Conversation States from callbacks gracefully without full definitions,
+# let's define an EDIT Conversation Handler properly in main.py, and here are the handlers for it:
+
+async def editq_receive_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    q_id = context.user_data.get('edit_q_id')
+    field_type = context.user_data.get('edit_q_field')
+    
+    if not q_id or not field_type:
+        await update.message.reply_text("❌ Session expire ho gaya. Dobara search karein.")
+        return ConversationHandler.END
+        
+    try:
+        if field_type == 'q':
+            update_question_db(q_id, 'question', text)
+        elif field_type == 'o':
+            opts_list = [o.strip() for o in text.split("\n") if o.strip()]
+            update_question_db(q_id, 'options', json.dumps(opts_list))
+        elif field_type == 'a':
+            if not text.isdigit() or int(text) not in [0,1,2,3,4,5,6,7,8,9]:
+                await update.message.reply_text("❌ Galat Index! Sirf number bhejein (jaise 0, 1, 2). Dobara try karein:")
+                return ASK_EDIT_Q_VALUE
+            update_question_db(q_id, 'correct_index', int(text))
+        elif field_type == 'e':
+            update_question_db(q_id, 'explanation', text)
+            
+        await update.message.reply_text(f"✅ Question successfully update ho gaya!\nMenu ke liye /menu dabayein.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Database error: {e}")
+        
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ---------------- 2. SUPER BROADCAST ----------------
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -328,21 +458,21 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
         if not json_data.startswith('['): json_data = '[' + json_data
         if not json_data.endswith(']'): json_data = json_data + ']'
         json_data = re.sub(r'\]\s*\[', ',', json_data)
-        
         parsed_json = json.loads(json_data)
         if not isinstance(parsed_json, list):
             raise ValueError("JSON array list [] format me hona chahiye.")
     except Exception as e:
-        await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein (Purana code clear kar diya gaya hai).")
+        await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein.")
         context.user_data["json_buffer"] = ""
         return ASK_QUIZ_JSON
         
     channel_id = context.user_data.get("squiz_chat_id")
-    await update.message.reply_text(f"✅ Successfully parsed {len(parsed_json)} questions!\n🚀 Channel me quiz bhejna shuru ho gaya hai. (Har question ke beech 30s ka gap hoga).")
+    await update.message.reply_text(f"✅ Successfully parsed {len(parsed_json)} questions!\n🚀 Channel me quiz bhejna shuru ho gaya hai.")
     
     asyncio.create_task(process_channel_json_quiz(context, channel_id, parsed_json, update.effective_user.id))
     context.user_data.clear()
     return ConversationHandler.END
+
 
 async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
     sent = 0
@@ -352,7 +482,6 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
             opts_list = [str(o) for o in item.get("option", [])]
             ans_str = str(item.get("answer", "")).strip().upper()
             sol = str(item.get("solution", "")).replace("<br>", "\n").replace("<br/>", "\n")
-            module = str(item.get("module", "GK"))
 
             q_clean_for_poll = re.sub(r'<[^>]+>', '', q)
             sol_clean_for_poll = re.sub(r'<[^>]+>', '', sol)
@@ -375,7 +504,6 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
             
             if len(safe_opts_poll) < 2: safe_opts_poll.extend(["Option 2", "Option 3", "Option 4"])
             safe_opts_poll = safe_opts_poll[:10]
-
 
             if not is_oversize:
                 await context.bot.send_poll(
@@ -432,11 +560,11 @@ async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "all":
         context.user_data['sq_subj'] = None
         context.user_data['sq_chap'] = None
-        # 🔥 FIX 1: Timer stuck problem resolved by sending it directly to COUNT state
+        # 🔥 FIX: Timer Freeze - Routes directly to TIMER state
         kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
               [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
         await query.edit_message_text("⏱ **Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        return ASK_QUIZ_GROUP_COUNT
+        return ASK_QUIZ_GROUP_TIMER
     else:
         subj_id = int(data)
         context.user_data['sq_subj'] = subj_id
@@ -459,7 +587,6 @@ async def sendquiz_group_timer(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text("⏱ **Har question ke liye Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
     return ASK_QUIZ_GROUP_COUNT
 
-# 🔥 FIX 2: Custom Question Type-in logic
 async def sendquiz_group_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -490,14 +617,13 @@ async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(f"✅ Awesome! Quiz {num} questions aur {timer}s timer ke sath group '{chat_title}' me launch ho raha hai...")
     
-    import quiz_engine
     await quiz_engine.start_quiz_session(context, chat_id, chat_title, subj, chap, update.effective_user.id, num, timer)
     
     context.user_data.clear()
     return ConversationHandler.END
 
 
-# ---------------- ADD QUESTION (SUBJECT -> CHAPTER -> WORD FILE) ----------------
+# ---------------- ADD QUESTION (WORD FILE) ----------------
 async def addquestion_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -513,8 +639,7 @@ async def addquestion_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["new_q_chapter"] = update.message.text.strip()
     await update.effective_message.reply_text(
         "📎 Ab apne questions ki Word (.docx) file upload karo:\n\n"
-        "(Bot automatically sirf Hindi direction wale questions extract karega aur "
-        "baaki English wale ya extra text ko ignore kar dega.)"
+        "(Bot automatically sirf Hindi direction wale questions extract karega)"
     )
     return ASK_DOCX_FILE
 
@@ -569,7 +694,7 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ---------------- DIRECT WORD FILE UPLOAD (OPTIONAL / OLD COMMAND) ----------------
+# ---------------- DIRECT WORD FILE UPLOAD (OPTIONAL) ----------------
 async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -626,7 +751,110 @@ async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text("✅ Question delete ho gaya.")
 
 
-# ---------------- OTHER ADMIN FUNCTIONS ----------------
+# ---------------- ⚙️ GROUP SETTINGS IN DM ----------------
+async def groupsettings_start_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
+    
+    groups = db.get_active_groups()
+    if not groups:
+        await update.effective_message.reply_text("❌ Abhi tak koi group ya channel register nahi hua hai.")
+        return
+        
+    kb = [[InlineKeyboardButton(g['title'], callback_data=f"gset_{g['chat_id']}")] for g in groups]
+    kb.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
+    
+    await update.effective_message.reply_text(
+        "⚙️ *Group Settings Management*\n\nKis group ki setting change karni hai?", 
+        reply_markup=InlineKeyboardMarkup(kb), 
+        parse_mode="Markdown"
+    )
+
+async def groupsettings_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    data = query.data
+    parts = data.split("_")
+    chat_id = int(parts[1])
+    
+    # Handle Toggles
+    if len(parts) > 2:
+        action = parts[2]
+        if action == "neg":
+            gs = db.get_group_settings(chat_id)
+            new_val = 0 if gs and gs.get("negative_marking") else 1
+            db.update_group_setting_field(chat_id, "negative_marking", new_val)
+    
+    gs = db.get_group_settings(chat_id)
+    chat_title = "Group"
+    for g in db.get_active_groups():
+        if g['chat_id'] == chat_id: chat_title = g['title']
+        
+    coins = gs['coin_per_correct'] if gs and gs.get('coin_per_correct') is not None else config.COIN_PER_CORRECT
+    neg_status = "✅ ON" if gs and gs.get('negative_marking') else "❌ OFF"
+    
+    text = (f"⚙️ *Settings — {chat_title}*\n\n"
+            f"🪙 *Coin Per Correct:* {coins} Coins\n"
+            f"⚠️ *Negative Marking:* {neg_status}")
+            
+    kb = [
+        [InlineKeyboardButton(f"🪙 Change Coins (Current: {coins})", callback_data=f"gsetc_{chat_id}")],
+        [InlineKeyboardButton(f"⚠️ Toggle Negative Marking", callback_data=f"gset_{chat_id}_neg")],
+        [InlineKeyboardButton("⬅️ Back to List", callback_data="amenu_groupsettings")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def groupsettings_coin_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    chat_id = int(query.data.split("_")[1])
+    context.user_data['gset_chat_id'] = chat_id
+    
+    await query.edit_message_text(
+        "🪙 *Naya Coin Rate Type Karein:*\n(Ek sahi jawab par kitne coin dene hain? Jaise: 2 ya 10)\n\n(Cancel ke liye /cancel likhein)",
+        parse_mode="Markdown"
+    )
+    return ASK_GSET_COINS
+
+async def groupsettings_coin_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ Kripya sirf number type karein:")
+        return ASK_GSET_COINS
+        
+    chat_id = context.user_data.get('gset_chat_id')
+    db.update_group_setting_field(chat_id, "coin_per_correct", int(text))
+    await update.message.reply_text(f"✅ Group Settings Update ho gayi! Naya coin rate: {text}\nMenu ke liye /menu dabayein.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# [Old Manual Commands kept for safety]
+async def groupsettings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text("💡 Group settings ab bot ke Private DM se aasaani se badli ja sakti hain. Bot me jake 'Group Settings' dabayein.")
+
+async def setgroupcoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
+    db.update_group_setting_field(update.effective_chat.id, "coin_per_correct", int(context.args[0]))
+    await update.effective_message.reply_text(f"✅ Is group ka coin rate ab {context.args[0]} hai.")
+
+async def setgroupnegative_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or context.args[0].lower() not in ("on", "off"): return
+    db.update_group_setting_field(update.effective_chat.id, "negative_marking", int(context.args[0].lower() == "on"))
+    await update.effective_message.reply_text("✅ Negative marking updated.")
+
+async def setgroupentryfee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
+    db.update_group_setting_field(update.effective_chat.id, "entry_fee", int(context.args[0]))
+    await update.effective_message.reply_text("✅ Entry fee updated.")
+
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -766,47 +994,7 @@ async def setcoinrate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config.COIN_PER_CORRECT = new_rate
     await update.effective_message.reply_text(f"✅ Global coin rate ab {new_rate} coins/correct answer hai.")
 
-async def groupsettings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    chat = update.effective_chat
-    if chat.type not in ("group", "supergroup", "channel"):
-        await update.effective_message.reply_text("⚠️ Ye command us group me chalao jiske settings set karni hain.")
-        return
-    db.upsert_group(chat.id, chat.title)
-    gs = db.get_group_settings(chat.id)
-    text = (f"⚙️ *Group Settings — {chat.title}*\n\n"
-            f"🪙 Coin per correct: {gs['coin_per_correct'] if gs and gs['coin_per_correct'] else config.COIN_PER_CORRECT}\n"
-            f"Badalne ke liye:\n`/setgroupcoin <amount>`\n`/setgroupnegative on <amount>`")
-    await update.effective_message.reply_text(text, parse_mode="Markdown")
 
-async def setgroupcoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.update_group_setting_field(update.effective_chat.id, "coin_per_correct", int(context.args[0]))
-    await update.effective_message.reply_text(f"✅ Is group ka coin rate ab {context.args[0]} hai.")
-
-async def setgroupnegative_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or context.args[0].lower() not in ("on", "off"): return
-    db.update_group_setting_field(update.effective_chat.id, "negative_marking", int(context.args[0].lower() == "on"))
-    await update.effective_message.reply_text("✅ Negative marking updated.")
-
-async def setgroupentryfee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.update_group_setting_field(update.effective_chat.id, "entry_fee", int(context.args[0]))
-    await update.effective_message.reply_text("✅ Entry fee updated.")
-
-async def addgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or len(context.args) < 1: return
-    try: chat_id = int(context.args[0])
-    except ValueError: return
-    db.upsert_group(chat_id, f"Group {chat_id}")
-    db.register_group_settings(chat_id, update.effective_user.id)
-    await update.effective_message.reply_text("✅ Group add ho gaya.")
-
-# ---------------- HTML NOTES (AUTO PUSH WITH BUTTONS) ----------------
 async def sendnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -939,7 +1127,6 @@ async def auto_react_to_bot_message(context, chat_id, message_id):
     from utils.reactions import auto_react
     await auto_react(context, chat_id, message_id)
 
-# 🔥 BOOST SYSTEM UPDATED (Run inside Bot DM)
 async def boost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
