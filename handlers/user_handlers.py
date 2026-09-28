@@ -42,7 +42,7 @@ def main_menu_keyboard(user_id):
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
         
-        # New Button For PDF Cleaner
+        # Button For PDF Cleaner
         [InlineKeyboardButton("📄 Clean PDF Links", callback_data="menu_cleanpdf")],
         
         # Naye App aur Social Media Links yahan add kiye gaye hain
@@ -112,6 +112,28 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ==========================================================
+    # 🚀 FORCE JOIN CHANNEL LOGIC
+    # ==========================================================
+    if not is_admin(user.id):  # Admins ko bypass karne do
+        try:
+            # Bot ko @mockrise channel me admin hona zaroori hai!
+            member = await context.bot.get_chat_member(chat_id="@mockrise", user_id=user.id)
+            if member.status in ["left", "kicked", "banned"]:
+                kb = [[InlineKeyboardButton("📢 Join @mockrise", url="https://t.me/mockrise")],
+                      [InlineKeyboardButton("✅ Maine Join Kar Liya Hai", callback_data="check_join")]]
+                await update.message.reply_text(
+                    "🛑 *Bot use karne ke liye hamara channel join karna zaroori hai!*\n\n"
+                    "Pehle neeche diye gaye button se channel join karein, fir 'Maine Join Kar Liya Hai' par click karein.",
+                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode="Markdown"
+                )
+                return
+        except Exception as e:
+            # Agar bot admin nahi hai ya channel nahi mila to error na de kar aage badh jayega
+            pass
+    # ==========================================================
+
     text = (
         f"👋 Namaste {user.first_name}!\n\n"
         "Main tumhara Quiz Bot hoon 🎯 — quiz khelo, coins kamao, "
@@ -119,6 +141,30 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Neeche diye options me se chuno 👇"
     )
     await update.message.reply_text(text, reply_markup=main_menu_keyboard(user.id))
+
+
+# 🚀 FORCE JOIN CHECK CALLBACK
+async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    try:
+        member = await context.bot.get_chat_member(chat_id="@mockrise", user_id=user_id)
+        if member.status in ["left", "kicked", "banned"]:
+            await query.answer("❌ Aapne abhi tak channel join nahi kiya hai! Pehle Join karein.", show_alert=True)
+            return
+    except Exception:
+        pass
+        
+    await query.answer("✅ Channel verify ho gaya!", show_alert=False)
+    
+    text = (
+        f"👋 Namaste {query.from_user.first_name}!\n\n"
+        "Main tumhara Quiz Bot hoon 🎯 — quiz khelo, coins kamao, "
+        "leaderboard me top karo, aur hamare platforms se jud jao!\n\n"
+        "Neeche diye options me se chuno 👇"
+    )
+    await query.message.edit_text(text, reply_markup=main_menu_keyboard(user_id))
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
