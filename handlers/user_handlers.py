@@ -91,7 +91,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 🚫 BAN CHECK SYSTEM
     existing = db.get_user(user.id)
-    if existing and existing.get("is_banned"):
+    if existing and existing["is_banned"]:
         await update.message.reply_text("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।")
         return
 
@@ -164,7 +164,7 @@ async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # 🚫 BAN CHECK SYSTEM
     u = db.get_user(user_id)
-    if u and u.get("is_banned"):
+    if u and u["is_banned"]:
         await query.answer("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।", show_alert=True)
         return
 
@@ -191,7 +191,7 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     # 🚫 BAN CHECK SYSTEM
     u = db.get_user(user.id)
-    if u and u.get("is_banned"):
+    if u and u["is_banned"]:
         await update.message.reply_text("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।")
         return
 
@@ -207,7 +207,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 🚫 BAN CHECK SYSTEM
     u = db.get_user(user_id)
-    if u and u.get("is_banned"):
+    if u and u["is_banned"]:
         await query.answer("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।", show_alert=True)
         return
 
