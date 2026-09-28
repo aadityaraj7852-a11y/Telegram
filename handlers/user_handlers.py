@@ -61,7 +61,9 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("📢 Broadcast", callback_data="amenu_broadcast"),
          InlineKeyboardButton("📣 Post Ad", callback_data="amenu_postad")],
          
-        # Yahan se Hashtags Ideas wala button hata diya gaya hai
+        # Remote Quiz (Admin Panel se Quiz bhejna)
+        [InlineKeyboardButton("🚀 Send Quiz to Group", callback_data="amenu_remotequiz")],
+         
         [InlineKeyboardButton("📝 Send Note", callback_data="amenu_sendnote"),
          InlineKeyboardButton("💾 Backup", callback_data="amenu_backup")],
          
@@ -330,7 +332,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/referral — Referral link\n"
         "/withdraw <coins> — Coins withdraw request\n"
         "/subjects — Sab subjects dekho\n"
-        "/lounge — Students discussion group ka link\n"
         "/discover — Group/channel directory browse karo\n\n"
         "*PDF/Notes Tools (sabke liye):*\n"
         "Koi bhi PDF bhejo → bot uska watermark/hyperlink hata kar wapas bhej dega\n\n"
@@ -373,7 +374,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================================
-# GROUP QUIZ
+# GROUP QUIZ (NEW INSTANT RANDOM MIXED FLOW)
 # =========================================================================
 
 async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -383,37 +384,47 @@ async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if quiz_engine.is_quiz_active(chat.id):
-        await update.message.reply_text("⚠️ Yaha pehle se quiz chal raha hai.")
+        await update.message.reply_text("⚠️ Yaha pehle se ek quiz chal raha hai ya wait kar raha hai.")
         return
 
-    subjects = db.get_subjects()
-    if not subjects:
-        await update.message.reply_text("❌ Abhi tak koi subject/question add nahi hua hai. Admin se kehna /uploadword use kare.")
-        return
+    await update.message.reply_text("🎲 *रैंडम सवालों का शानदार क्विज़ तैयार किया जा रहा है...*", parse_mode="Markdown")
+    
+    # 10 Questions, 15 Second Timer, Mixed Subjects (None, None) 
+    # Aur 5-Person ready system automatically quiz_engine trigger kar dega
+    await quiz_engine.start_quiz_session(
+        context=context, 
+        chat_id=chat.id, 
+        chat_title=chat.title, 
+        subject_id=None, 
+        chapter_id=None, 
+        user_id=update.effective_user.id, 
+        num_questions=10, 
+        custom_timer=15
+    )
 
-    keyboard = [[InlineKeyboardButton(s["name"], callback_data=f"qsubj_{s['subject_id']}")] for s in subjects]
-    await update.message.reply_text("📚 Subject chuno:", reply_markup=InlineKeyboardMarkup(keyboard))
+async def stopquiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    stopped = await quiz_engine.stop_quiz(context, chat.id)
+    if not stopped:
+        await update.message.reply_text("Koi active quiz nahi hai jise roka ja sake.")
+    else:
+        await update.message.reply_text("🛑 Quiz safaltapurvak rok diya gaya hai.")
 
-
+# --- Old callbacks kept safe in case of old button clicks ---
 async def subject_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     subject_id = int(query.data.split("_")[1])
     chapters = db.get_chapters(subject_id)
-
-    keyboard = [[InlineKeyboardButton(c["name"], callback_data=f"qchap_{subject_id}_{c['chapter_id']}")]
-                for c in chapters]
+    keyboard = [[InlineKeyboardButton(c["name"], callback_data=f"qchap_{subject_id}_{c['chapter_id']}")] for c in chapters]
     keyboard.append([InlineKeyboardButton("📖 Poora Subject (sab chapters)", callback_data=f"qallchap_{subject_id}")])
     await query.edit_message_text("📑 Chapter chuno:", reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def chapter_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
-    subject_id = int(parts[1])
-    chapter_id = int(parts[2])
-
+    subject_id, chapter_id = int(parts[1]), int(parts[2])
     keyboard = [
         [InlineKeyboardButton("10 Questions", callback_data=f"qlen_{subject_id}_{chapter_id}_10"),
          InlineKeyboardButton("20 Questions", callback_data=f"qlen_{subject_id}_{chapter_id}_20")],
@@ -421,12 +432,10 @@ async def chapter_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await query.edit_message_text("🔢 Kitne questions chahiye?", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def all_chapters_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     subject_id = int(query.data.split("_")[1])
-
     keyboard = [
         [InlineKeyboardButton("10 Questions", callback_data=f"qslen_{subject_id}_10"),
          InlineKeyboardButton("20 Questions", callback_data=f"qslen_{subject_id}_20")],
@@ -434,49 +443,27 @@ async def all_chapters_selected(update: Update, context: ContextTypes.DEFAULT_TY
     ]
     await query.edit_message_text("🔢 Kitne questions chahiye?", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def length_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
-    subject_id = int(parts[1])
-    chapter_id = int(parts[2])
-    num = int(parts[3])
-
-    await query.edit_message_text(f"✅ Quiz shuru ho raha hai... ({num} questions)")
-
+    subject_id, chapter_id, num = int(parts[1]), int(parts[2]), int(parts[3])
+    await query.edit_message_text(f"✅ Quiz session initialize ho raha hai... ({num} questions)")
     chat = query.message.chat
-    await quiz_engine.start_quiz_session(
-        context, chat.id, chat.title, subject_id, chapter_id,
-        query.from_user.id, num
-    )
-
+    await quiz_engine.start_quiz_session(context, chat.id, chat.title, subject_id, chapter_id, query.from_user.id, num, 15)
 
 async def subject_length_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
-    subject_id = int(parts[1])
-    num = int(parts[2])
-
-    await query.edit_message_text(f"✅ Quiz shuru ho raha hai... ({num} questions)")
-
+    subject_id, num = int(parts[1]), int(parts[2])
+    await query.edit_message_text(f"✅ Quiz session initialize ho raha hai... ({num} questions)")
     chat = query.message.chat
-    await quiz_engine.start_quiz_session(
-        context, chat.id, chat.title, subject_id, None,
-        query.from_user.id, num
-    )
-
-
-async def stopquiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    stopped = await quiz_engine.stop_quiz(context, chat.id)
-    if not stopped:
-        await update.message.reply_text("Koi active quiz nahi hai.")
+    await quiz_engine.start_quiz_session(context, chat.id, chat.title, subject_id, None, query.from_user.id, num, 15)
 
 
 # =========================================================================
-# SOLO PRACTICE + 1v1 DUEL (private chat) — minimum N subjects required
+# SOLO PRACTICE + 1v1 DUEL (private chat)
 # =========================================================================
 
 async def solo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -484,9 +471,9 @@ async def solo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🧠 Solo practice sirf mere private chat me hoti hai. Mujhe DM karo!")
         return
     subjects = db.get_subjects()
-    if len(subjects) < config.MIN_SUBJECTS_FOR_SOLO:
+    if len(subjects) < getattr(config, 'MIN_SUBJECTS_FOR_SOLO', 1):
         await update.message.reply_text(
-            f"❌ Solo practice ke liye kam se kam {config.MIN_SUBJECTS_FOR_SOLO} subjects "
+            f"❌ Solo practice ke liye kam se kam {getattr(config, 'MIN_SUBJECTS_FOR_SOLO', 1)} subjects "
             f"available hone chahiye. Abhi sirf {len(subjects)} hain."
         )
         return
@@ -496,11 +483,10 @@ async def solo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _send_mode_subject_picker(query):
     subjects = db.get_subjects()
-    if len(subjects) < config.MIN_SUBJECTS_FOR_SOLO:
+    if len(subjects) < getattr(config, 'MIN_SUBJECTS_FOR_SOLO', 1):
         await query.edit_message_text(
-            f"❌ Solo practice ke liye kam se kam {config.MIN_SUBJECTS_FOR_SOLO} subjects "
-            f"available hone chahiye. Abhi sirf {len(subjects)} hain — admin se aur "
-            f"subjects/questions add karne ko kaho.",
+            f"❌ Solo practice ke liye kam se kam {getattr(config, 'MIN_SUBJECTS_FOR_SOLO', 1)} subjects "
+            f"available hone chahiye. Abhi sirf {len(subjects)} hain.",
             reply_markup=_back_kb()
         )
         return
@@ -535,7 +521,6 @@ async def solo_length_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def challenge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/challenge @username ya /challenge <user_id> — 1v1 duel invite."""
     if update.effective_chat.type != "private":
         await update.message.reply_text("⚔️ Challenge sirf private chat se bheja ja sakta hai. Mujhe DM karo!")
         return
@@ -626,9 +611,6 @@ async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception:
         pass
 
-    # Dono players ko apne-apne private chat me alag poll milta hai (Telegram me
-    # poll ek hi chat me hota hai) — end me duel_id se combined result compare
-    # hokar winner announce hota hai.
     await quiz_engine.start_duel(context, challenger_id, challenger_id, query.from_user.id, subject_id, None, num)
     await quiz_engine.start_duel(context, query.from_user.id, challenger_id, query.from_user.id, subject_id, None, num)
 
@@ -653,27 +635,22 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = build_leaderboard_text(rows, "🏆 Global Leaderboard")
     await update.message.reply_text(text, parse_mode="Markdown")
 
-
 async def globaltop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = db.leaderboard(limit=20)
     text = build_leaderboard_text(rows, "🌍 Top 20 Global Players")
     await update.message.reply_text(text, parse_mode="Markdown")
 
-
 async def myscore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_myscore_text(update.effective_user.id), parse_mode="Markdown")
 
-
 async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_history_text(update.effective_user.id), parse_mode="Markdown")
-
 
 async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     u = db.get_user(user.id)
     coins = u["coins"] if u else 0
-    await update.message.reply_text(f"🪙 Tumhare paas {coins} coins hain.")
-
+    await update.message.reply_text(f"🪙 Tumhare paas {coins} coins hain.\n\nWithdraw karne ke liye `/withdraw <amount>` likhein.", parse_mode="Markdown")
 
 async def referral_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
@@ -684,11 +661,10 @@ async def referral_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /withdraw <coins>\nExample: /withdraw 100")
+        await update.message.reply_text("Usage: `/withdraw <coins>`\nExample: `/withdraw 100`", parse_mode="Markdown")
         return
 
     amount = int(context.args[0])
@@ -712,10 +688,8 @@ async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-
 async def subjects_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_subjects(update.message)
-
 
 async def lounge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Students discussion group ka personal access link deta hai."""
@@ -736,8 +710,6 @@ async def lounge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================================
 
 async def discover_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Categories dikhata hai — jitne bhi admin ne apne groups/channels
-    directory me add kiye hain unhe browse karne ka option."""
     categories = db.get_directory_categories()
     if not categories:
         await update.message.reply_text(
@@ -750,7 +722,6 @@ async def discover_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 *Group/Channel Directory*\n\nCategory chuno:",
         parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
 
 async def directory_category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -771,7 +742,6 @@ async def directory_category_selected(update: Update, context: ContextTypes.DEFA
 
     await query.edit_message_text("\n\n".join(lines), parse_mode="Markdown",
                                   reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def directory_open_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
