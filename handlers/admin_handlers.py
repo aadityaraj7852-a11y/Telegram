@@ -200,7 +200,7 @@ async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================================
-# ✏️ EDIT QUESTION SYSTEM
+# ✏️ EDIT QUESTION SYSTEM (NEW)
 # =========================================================================
 async def editq_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -222,7 +222,7 @@ async def editq_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_EDIT_Q_SEARCH
 
     kb = []
-    for q in matches[:10]:
+    for q in matches[:10]: # Top 10 matches dikhayega
         short_q = q['question'][:30].replace('\n', ' ') + "..."
         kb.append([InlineKeyboardButton(short_q, callback_data=f"eqsel_{q['question_id']}")])
     kb.append([InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")])
@@ -392,41 +392,6 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ---------------- POST AD (RESTORED) ----------------
-async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📝 Ad ka text/content likho:\n(Cancel ke liye /cancel)")
-    return ASK_AD_CONTENT
-
-async def postad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ad_content"] = update.message.text
-    await update.effective_message.reply_text("🔘 Button chahiye? 'Button Text | https://link.com' format me likho.\nNahi chahiye to /skip likho.")
-    return ASK_AD_BUTTON
-
-async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    button_text, button_url = None, None
-    if text != "/skip" and "|" in text:
-        button_text, button_url = [x.strip() for x in text.split("|", 1)]
-    content = context.user_data.get("ad_content", "")
-    ad_id = db.create_ad(content, button_text, button_url, update.effective_user.id)
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]]) if button_text else None
-    groups = db.get_active_groups()
-    sent = 0
-    for g in groups:
-        try:
-            msg = await context.bot.send_message(g["chat_id"], content, reply_markup=reply_markup)
-            await auto_react_to_bot_message(context, g["chat_id"], msg.message_id)
-            sent += 1
-        except Exception:
-            db.deactivate_group(g["chat_id"])
-    db.increment_ad_sent(ad_id, sent)
-    await update.effective_message.reply_text(f"✅ Ad {sent} groups/channels me bhej diya gaya.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
 # ---------------- 3. SEND QUIZ TO GROUP/CHANNEL ----------------
 async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
@@ -506,7 +471,7 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# --- Group Quiz Routing ---
+# --- Group Quiz Logic ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -519,7 +484,6 @@ async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE
         kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
               [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
         await query.edit_message_text("⏱ **Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        
         return ASK_QUIZ_GROUP_COUNT
     else:
         subj_id = int(data)
@@ -573,7 +537,6 @@ async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(f"✅ Awesome! Quiz {num} questions aur {timer}s timer ke sath group '{chat_title}' me launch ho raha hai...")
     
-    import quiz_engine
     await quiz_engine.start_quiz_session(context, chat_id, chat_title, subj, chap, update.effective_user.id, num, timer)
     
     context.user_data.clear()
@@ -733,6 +696,47 @@ async def groupsettings_coin_receive(update: Update, context: ContextTypes.DEFAU
 
 
 # ---------------- RESTORED OLD ADMIN COMMANDS TO PREVENT CRASHES ----------------
+async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Usage: /deletequestion <id>")
+        return
+    db.delete_question(int(context.args[0]))
+    await update.effective_message.reply_text("✅ Question delete ho gaya.")
+
+async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📝 Ad ka text/content likho:\n(Cancel ke liye /cancel)")
+    return ASK_AD_CONTENT
+
+async def postad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["ad_content"] = update.message.text
+    await update.effective_message.reply_text("🔘 Button chahiye? 'Button Text | https://link.com' format me likho.\nNahi chahiye to /skip likho.")
+    return ASK_AD_BUTTON
+
+async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    button_text, button_url = None, None
+    if text != "/skip" and "|" in text:
+        button_text, button_url = [x.strip() for x in text.split("|", 1)]
+    content = context.user_data.get("ad_content", "")
+    ad_id = db.create_ad(content, button_text, button_url, update.effective_user.id)
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]]) if button_text else None
+    groups = db.get_active_groups()
+    sent = 0
+    for g in groups:
+        try:
+            msg = await context.bot.send_message(g["chat_id"], content, reply_markup=reply_markup)
+            await auto_react_to_bot_message(context, g["chat_id"], msg.message_id)
+            sent += 1
+        except Exception:
+            db.deactivate_group(g["chat_id"])
+    db.increment_ad_sent(ad_id, sent)
+    await update.effective_message.reply_text(f"✅ Ad {sent} groups/channels me bhej diya gaya.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
 async def groupsettings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💡 Group settings ab bot ke Private DM se aasaani se badli ja sakti hain. Bot me jake 'Group Settings' dabayein.")
 
@@ -1133,6 +1137,12 @@ async def stopboost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or not context.args[0].isdigit(): return
     db.deactivate_boost_job(int(context.args[0]))
     await update.effective_message.reply_text("✅ Boost job rok diya gaya.")
+
+async def besttime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    hours = db.get_best_posting_hours(update.effective_chat.id)
+    lines = ["⏰ *Best Posting Times*\n"] + [f"• {h%12 or 12}:00 {'AM' if h<12 else 'PM'} — {c} activities" for h, c in hours]
+    await update.effective_message.reply_text("\n".join(lines) if hours else "Data nahi hai.", parse_mode="Markdown")
 
 async def adddirectory_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
