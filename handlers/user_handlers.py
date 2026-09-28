@@ -10,16 +10,20 @@ category kholta hai.
 """
 
 import time
+import os
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 
 import database as db
 import config
 import quiz_engine
 from utils.exporters import build_leaderboard_text
 from utils.permissions import is_admin
+from utils.pdf_cleaner import clean_pdf
 
+# New State for PDF Cleaner
+ASK_PDF = 900
 
 # =========================================================================
 # MAIN MENU (button UI)
@@ -37,6 +41,9 @@ def main_menu_keyboard(user_id):
          InlineKeyboardButton("🪙 Wallet", callback_data="menu_wallet")],
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
+        
+        # New Button For PDF Cleaner
+        [InlineKeyboardButton("📄 Clean PDF Links", callback_data="menu_cleanpdf")],
         
         # Naye App aur Social Media Links yahan add kiye gaye hain
         [InlineKeyboardButton("📱 Download App", url="https://play.google.com/store/apps/details?id=com.mockrise.learning")],
@@ -61,7 +68,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("📢 Broadcast", callback_data="amenu_broadcast"),
          InlineKeyboardButton("📣 Post Ad", callback_data="amenu_postad")],
          
-        # Remote Quiz (Admin Panel se Quiz bhejna)
+        # Remote Quiz (Admin Panel se Quiz bhejna - naya feature)
         [InlineKeyboardButton("🚀 Send Quiz to Group", callback_data="amenu_remotequiz")],
          
         [InlineKeyboardButton("📝 Send Note", callback_data="amenu_sendnote"),
@@ -233,6 +240,68 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+# =========================================================================
+# PDF CLEANER (USER FLOW)
+# =========================================================================
+async def cleanpdf_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query: await query.answer()
+    
+    msg = (
+        "📄 *PDF Link Remover*\n\n"
+        "Kripya apni **PDF file** yahan bhejein jiske links aapko hatane hain:\n\n"
+        "(Cancel karne ke liye /cancel dabayein)"
+    )
+    if query:
+        await query.edit_message_text(msg, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    return ASK_PDF
+
+async def cleanpdf_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc or not doc.file_name.lower().endswith(".pdf"):
+        await update.message.reply_text("❌ Kripya sirf **PDF file** hi bhejein ya /cancel dabayein.")
+        return ASK_PDF
+        
+    status = await update.message.reply_text("⏳ *PDF process ho rahi hai... Links hataye ja rahe hain!*", parse_mode="Markdown")
+    
+    in_path = f"/tmp/in_{doc.file_unique_id}.pdf"
+    out_path = f"/tmp/out_{doc.file_unique_id}.pdf"
+    
+    try:
+        file = await context.bot.get_file(doc.file_id)
+        await file.download_to_drive(in_path)
+        
+        ok, msg = clean_pdf(in_path, out_path)
+        
+        if not ok:
+            await status.edit_text(f"❌ Error: {msg}")
+        else:
+            try: db.log_pdf_job(update.effective_user.id, doc.file_name, "clean")
+            except: pass
+            
+            await update.message.reply_document(
+                document=open(out_path, "rb"), 
+                filename=f"Cleaned_{doc.file_name}", 
+                caption="✅ **Aapki PDF se sabhi links hata diye gaye hain!**",
+                parse_mode="Markdown"
+            )
+            await status.delete()
+            
+    except Exception as e:
+        await status.edit_text("❌ File process karne me dikkat aayi.")
+        
+    finally:
+        if os.path.exists(in_path): os.remove(in_path)
+        if os.path.exists(out_path): os.remove(out_path)
+        
+    return ConversationHandler.END
+
+async def cleanpdf_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ PDF Cleaner cancel ho gaya. Menu ke liye /menu dabayein.")
+    return ConversationHandler.END
+
 
 async def _show_subjects(message, edit=False, query=None):
     subjects = db.get_subjects()
@@ -334,7 +403,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/subjects — Sab subjects dekho\n"
         "/discover — Group/channel directory browse karo\n\n"
         "*PDF/Notes Tools (sabke liye):*\n"
-        "Koi bhi PDF bhejo → bot uska watermark/hyperlink hata kar wapas bhej dega\n\n"
+        "Menu me jakar 'Clean PDF Links' button dabayein.\n\n"
         "*Admin Commands (owner/admin):*\n"
         "/addquestion — Manually question add karo\n"
         "/uploadword — Word file se bulk questions add karo\n"
@@ -389,8 +458,6 @@ async def quiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🎲 *रैंडम सवालों का शानदार क्विज़ तैयार किया जा रहा है...*", parse_mode="Markdown")
     
-    # 10 Questions, 15 Second Timer, Mixed Subjects (None, None) 
-    # Aur 5-Person ready system automatically quiz_engine trigger kar dega
     await quiz_engine.start_quiz_session(
         context=context, 
         chat_id=chat.id, 
@@ -410,7 +477,6 @@ async def stopquiz_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🛑 Quiz safaltapurvak rok diya gaya hai.")
 
-# --- Old callbacks kept safe in case of old button clicks ---
 async def subject_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
