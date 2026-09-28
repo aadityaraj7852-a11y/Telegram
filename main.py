@@ -115,8 +115,23 @@ def build_app():
     app.add_handler(CommandHandler("withdraw", uh.withdraw_cmd))
     app.add_handler(CommandHandler("subjects", uh.subjects_cmd))
     
-    # Force Join Check Handler
     app.add_handler(CallbackQueryHandler(uh.check_join_callback, pattern=r"^check_join$"))
+
+    # ==============================================================
+    # 📩 SUPPORT SYSTEM (USER TO ADMIN)
+    # ==============================================================
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(uh.support_start, pattern=r"^menu_support$"), CommandHandler("support", uh.support_start)],
+        states={
+            uh.ASK_SUPPORT: [MessageHandler(filters.TEXT & ~filters.COMMAND, uh.support_process)],
+        },
+        fallbacks=[CommandHandler("cancel", uh.support_cancel)],
+        allow_reentry=True
+    ))
+
+    # 👨‍💻 ADMIN REPLY TO USER
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, ah.owner_reply_handler))
+    # ==============================================================
 
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(uh.cleanpdf_start, pattern=r"^menu_cleanpdf$"), CommandHandler("cleanpdf", uh.cleanpdf_start)],
@@ -282,7 +297,10 @@ def build_app():
     app.add_handler(CommandHandler("setgroupcoin", ah.setgroupcoin_cmd))
     app.add_handler(CommandHandler("setgroupnegative", ah.setgroupnegative_cmd))
     app.add_handler(CommandHandler("setgroupentryfee", ah.setgroupentryfee_cmd))
+    
     app.add_handler(CommandHandler("removedirectory", ah.removedirectory_cmd))
+    app.add_handler(CallbackQueryHandler(ah.deldir_action, pattern=r"^deldir_"))
+
     app.add_handler(CommandHandler("discover", uh.discover_cmd))
     app.add_handler(CallbackQueryHandler(uh.directory_category_selected, pattern=r"^dircat_"))
     app.add_handler(CallbackQueryHandler(uh.directory_open_entry, pattern=r"^diropen_"))
