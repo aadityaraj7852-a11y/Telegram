@@ -48,9 +48,11 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         await context.bot.send_message(chat_id, "⚠️ यहाँ पहले से एक क्विज़ चल रहा है या शुरू होने वाला है!")
         return
 
-    all_q = db.get_questions()
+    all_q_rows = db.get_questions()
     filtered_q = []
-    for q in all_q:
+    for row in all_q_rows:
+        # 🛠 FIX: Convert sqlite3.Row to standard dict instantly
+        q = dict(row)
         if subject_id and q.get('subject_id') != subject_id: 
             continue
         if chapter_id and q.get('chapter_id') != chapter_id: 
