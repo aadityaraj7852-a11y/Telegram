@@ -310,31 +310,92 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
+# 🔥 SMART PROCESSOR (Sends SINGLE POLL normally, uses Message->Poll->Spoiler ONLY for huge questions)
 async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
     sent = 0
     for item in parsed_json:
         try:
             q = str(item.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
-            opts_list = item.get("option", [])
-            opts = "\n".join([str(o) for o in opts_list]).replace("<br>", "\n")
-            ans = str(item.get("answer", ""))
+            opts_list = [str(o) for o in item.get("option", [])]
+            ans_str = str(item.get("answer", "")).strip().upper()
             sol = str(item.get("solution", "")).replace("<br>", "\n").replace("<br/>", "\n")
-            module = str(item.get("module", "GK"))
+
+            # Handling tags like <b> in question since Polls don't support HTML
+            q_clean_for_poll = re.sub(r'<[^>]+>', '', q)
+            sol_clean_for_poll = re.sub(r'<[^>]+>', '', sol)
+
+            # Convert answer to index
+            ans_idx = 0
+            if ans_str.startswith('A') or ans_str == '1': ans_idx = 0
+            elif ans_str.startswith('B') or ans_str == '2': ans_idx = 1
+            elif ans_str.startswith('C') or ans_str == '3': ans_idx = 2
+            elif ans_str.startswith('D') or ans_str == '4': ans_idx = 3
+
+            # ========================================================
+            # Check Telegram's Native Poll Limits
+            # Telegram Limits: Question(300), Explanation(200), Options(100 each)
+            # ========================================================
+            is_oversize = False
+            if len(q_clean_for_poll) > 300: is_oversize = True
+            if len(sol_clean_for_poll) > 200: is_oversize = True
             
-            q_text = f"🏷 <b>Topic:</b> {module}\n\n❓ <b>प्रश्न:</b>\n{q}\n\n<b>विकल्प:</b>\n{opts}"
-            if len(q_text) > 4000: q_text = q_text[:4000] + "..."
-            await context.bot.send_message(chat_id=channel_id, text=q_text, parse_mode="HTML")
+            # Agar option me HTML ho, toh poll me limit ke bahar ja sakta hai
+            safe_opts_poll = []
+            for opt in opts_list:
+                opt_clean = re.sub(r'<[^>]+>', '', opt)
+                if len(opt_clean) > 100: is_oversize = True
+                safe_opts_poll.append(opt_clean)
             
-            if sol:
-                sol_text = f"✅ <b>सही उत्तर:</b> {ans}\n\n<tg-spoiler><b>व्याख्या (Explanation):</b>\n{sol}</tg-spoiler>"
+            if len(safe_opts_poll) < 2: safe_opts_poll.extend(["Option 2", "Option 3", "Option 4"])
+            safe_opts_poll = safe_opts_poll[:10]
+
+
+            if not is_oversize:
+                # ----------------------------------------------------
+                # CASE 1: EVERYTHING IS NORMAL (Send ONE Native Poll)
+                # ----------------------------------------------------
+                await context.bot.send_poll(
+                    chat_id=channel_id,
+                    question=q_clean_for_poll,
+                    options=safe_opts_poll,
+                    type="quiz",
+                    correct_option_id=ans_idx,
+                    explanation=sol_clean_for_poll,
+                    is_anonymous=True
+                )
             else:
-                sol_text = f"✅ <b>सही उत्तर:</b> {ans}"
-                
-            if len(sol_text) > 4000: sol_text = sol_text[:4000] + "...</tg-spoiler>"
-            await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
+                # ----------------------------------------------------
+                # CASE 2: QUESTION/SOLUTION IS HUGE (Message -> Poll -> Spoiler)
+                # ----------------------------------------------------
+                # 1. SEND QUESTION
+                q_text = f"❓ <b>प्रश्न:</b>\n{q}"
+                if len(q_text) > 4000: q_text = q_text[:4000] + "..."
+                await context.bot.send_message(chat_id=channel_id, text=q_text, parse_mode="HTML")
+                await asyncio.sleep(1)
+
+                # 2. SEND TRUNCATED POLL
+                truncated_opts = [o[:97] + "..." if len(o) > 100 else o for o in safe_opts_poll]
+                await context.bot.send_poll(
+                    chat_id=channel_id,
+                    question="👆 ऊपर दिए गए प्रश्न का सही विकल्प चुनें:",
+                    options=truncated_opts,
+                    type="quiz",
+                    correct_option_id=ans_idx,
+                    is_anonymous=True
+                )
+                await asyncio.sleep(1)
+
+                # 3. SEND SPOILER SOLUTION
+                if sol:
+                    sol_text = f"💡 <b>विस्तृत व्याख्या:</b>\n<tg-spoiler>{sol}</tg-spoiler>"
+                else:
+                    sol_text = f"💡 <b>सही उत्तर:</b>\n<tg-spoiler>{ans_str}</tg-spoiler>"
+                    
+                if len(sol_text) > 4000: sol_text = sol_text[:4000] + "...</tg-spoiler>"
+                await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
             
             sent += 1
-            await asyncio.sleep(30)
+            await asyncio.sleep(30) # Delay between questions
         except Exception as e:
             logger.error(f"Error sending to channel: {e}")
             await asyncio.sleep(5)
@@ -342,6 +403,7 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
     try:
         await context.bot.send_message(chat_id=admin_id, text=f"✅ Channel me {sent} questions successfully bhej diye gaye hain!")
     except: pass
+
 
 # --- Group Quiz Logic ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -936,7 +998,6 @@ async def adddirectory_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# 🗑 DIRECTORY ENTRY DELETE LOGIC UPDATED
 async def removedirectory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     
