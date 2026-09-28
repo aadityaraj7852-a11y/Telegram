@@ -1185,3 +1185,9 @@ async def stopboost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or not context.args[0].isdigit(): return
     db.deactivate_boost_job(int(context.args[0]))
     await update.effective_message.reply_text("✅ Boost job rok diya gaya.")
+
+async def besttime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    hours = db.get_best_posting_hours(update.effective_chat.id)
+    lines = ["⏰ *Best Posting Times*\n"] + [f"• {h%12 or 12}:00 {'AM' if h<12 else 'PM'} — {c} activities" for h, c in hours]
+    await update.effective_message.reply_text("\n".join(lines) if hours else "Data nahi hai.", parse_mode="Markdown")
