@@ -348,46 +348,93 @@ async def broadcast_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>🏆 Mega Quiz Alert!</b>\n\n"
         "<blockquote>💡 Quote: Mehnat ka fal hamesha meetha hota hai.</blockquote>\n\n"
         "<i>Aaj ka quiz live ho chuka hai. Jaldi join karein!</i>\n"
-        "<a href='[https://t.me/mockrise](https://t.me/mockrise)'>Mockrise Join Karein</a>\n"
+        "<a href=\"https://t.me/mockrise\">Mockrise Join Karein</a>\n"
         "```\n\n"
         "(Cancel karne ke liye /cancel likhein)"
     )
     await query.edit_message_text(sample_text, parse_mode="Markdown")
     return ASK_BROADCAST_MSG
 
+def _normalize_broadcast_html(text: str) -> str:
+    """Normalize common HTML pasted by admins before Telegram HTML parsing."""
+    if not text:
+        return text
+    # Admins often paste Markdown-style links inside an HTML href.
+    # Convert href='[https://example](https://example)' -> href="https://example".
+    text = re.sub(
+        r"href\s*=\s*([\"\'])\[([^\]]+)\]\((https?://[^)]+)\)\1",
+        lambda m: f'href="{m.group(3)}"',
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Also support Markdown links used as normal text: [Title](https://...).
+    text = re.sub(
+        r"\[([^\]]+)\]\((https?://[^)]+)\)",
+        r'<a href="\2">\1</a>',
+        text,
+    )
+    return text
+
+
+async def _send_broadcast_message(bot, target, message):
+    """Send a broadcast while preserving Telegram formatting and media."""
+    # If the admin pasted raw HTML as text, parse it instead of forwarding the
+    # literal <b>, <i>, <a> tags. If the admin sent a normally formatted
+    # Telegram message, copy_message preserves its existing entities.
+    if message.text is not None:
+        text = message.text
+        if re.search(r"</?(?:b|strong|i|em|u|s|strike|code|pre|a|blockquote|tg-spoiler)(?:\s|>)", text, re.I):
+            text = _normalize_broadcast_html(text)
+            await bot.send_message(chat_id=target, text=text, parse_mode="HTML", disable_web_page_preview=False)
+        else:
+            await bot.copy_message(chat_id=target, from_chat_id=message.chat_id, message_id=message.message_id)
+        return
+
+    # Media/caption: copy normally so photos, documents, polls, etc. retain
+    # the original message structure and Telegram entities.
+    await bot.copy_message(chat_id=target, from_chat_id=message.chat_id, message_id=message.message_id)
+
+
 async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_type = context.user_data.get("bcast_target")
-    msg_id = update.message.message_id
-    from_chat_id = update.effective_chat.id
-    
+    message = update.effective_message
+
     targets = []
     if target_type == "users":
         targets = [u["user_id"] for u in db.get_all_users() if not u["is_banned"]]
     elif target_type == "allgroups":
         targets = [g["chat_id"] for g in db.get_active_groups()]
     else:
-        try: targets = [int(target_type)]
-        except: targets = []
+        try:
+            targets = [int(target_type)]
+        except Exception:
+            targets = []
 
     if not targets:
-        await update.message.reply_text("❌ Koi targets nahi mile.")
+        await message.reply_text("❌ Koi targets nahi mile.")
         return ConversationHandler.END
 
-    status_msg = await update.message.reply_text(f"📢 Broadcast shuru ho raha hai... 0/{len(targets)}")
+    status_msg = await message.reply_text(f"📢 Broadcast shuru ho raha hai... 0/{len(targets)}")
     sent, failed = 0, 0
-    
-    for i, t in enumerate(targets):
+
+    for i, target in enumerate(targets, start=1):
         try:
-            await context.bot.copy_message(chat_id=t, from_chat_id=from_chat_id, message_id=msg_id)
+            await _send_broadcast_message(context.bot, target, message)
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
-            
-        if i % 25 == 0 and i > 0:
-            try: await status_msg.edit_text(f"📢 Bhej raha hoon... {i}/{len(targets)}")
-            except Exception: pass
-            
-    await status_msg.edit_text(f"✅ Broadcast Complete!\nTarget: {target_type.upper()}\nSent: {sent} | Failed: {failed}")
+            # Keep going; one invalid/blocked target should not stop the whole broadcast.
+            logger.warning("Broadcast failed for %s: %s", target, e)
+
+        if i % 25 == 0:
+            try:
+                await status_msg.edit_text(f"📢 Bhej raha hoon... {i}/{len(targets)}")
+            except Exception:
+                pass
+
+    await status_msg.edit_text(
+        f"✅ Broadcast Complete!\nTarget: {target_type.upper()}\nSent: {sent} | Failed: {failed}"
+    )
     context.user_data.clear()
     return ConversationHandler.END
 
