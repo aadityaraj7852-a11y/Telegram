@@ -15,11 +15,11 @@ from fpdf import FPDF
 import database as db
 import config
 from utils.reactions import auto_react
-from utils.permissions import is_admin, is_owner  # Admin permission check ke liye
+from utils.permissions import is_admin, is_owner
 
 logger = logging.getLogger(__name__)
 
-# Active quizzes और Ready sessions ट्रैक करने के लिए
+# Active quizzes aur Ready sessions track karne ke liye
 active_quizzes = {}
 ready_sessions = {}
 
@@ -45,7 +45,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         await context.bot.send_message(chat_id, "⚠️ यहाँ पहले से एक क्विज़ चल रहा है या शुरू होने वाला है!")
         return
 
-    # डेटाबेस से सवाल उठाना
+    # Database se sawaal uthana
     all_q = db.get_questions()
     filtered_q = []
     for q in all_q:
@@ -64,27 +64,29 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
     timer = custom_timer if custom_timer else getattr(config, 'QUESTION_TIME', 15)
     subj_name = "Mixed (सभी विषय)" if not subject_id else "Selected Topic"
 
-    # शानदार डिज़ाइन वाला स्टार्ट मैसेज
+    # 🔥 NAYA FANCY UI (As per your design)
     text = (
-        f"❑ *महा-क्विज़ प्रतियोगिता शुरू होने वाली है!*\n"
-        f"__________________________________________\n\n"
-        f"➭ *विषय (Topic):* {subj_name}\n"
-        f"➛ *कुल प्रश्न:* {len(questions_to_ask)} ☞ तैयार हो जाएं!\n\n"
-        f"➭ *नियम और समय (Rules & Timer)*\n"
-        f"➛ *समय:* {timer} सेकंड प्रति प्रश्न ☞ तेज़ जवाब पर 10 पॉइंट्स!\n"
-        f"➛ *शर्त:* क्विज़ शुरू करने के लिए कम से कम 5 लोगों का 'Ready' होना ज़रूरी है।\n"
-        f"__________________________________________\n\n"
-        f"☞ *नीचे दिए गए बटन पर क्लिक करके अपनी हाज़िरी लगाएँ:*\n"
-        f"_(Admin इस बटन को दबाकर क्विज़ तुरंत शुरू कर सकते हैं)_"
+        f"╔══════════════════════╗\n"
+        f"🏆  *LIVE QUIZ — MockRise*  🏆\n"
+        f"╚══════════════════════╝\n\n"
+        f"📚 *Topic:* {subj_name}\n"
+        f"📝 *Unlimited Question Practice*\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"❓ *{len(questions_to_ask)} प्रश्न*  ⏱ *{timer}s/Q*\n"
+        f"🔀 *Shuffle: ON*\n"
+        f"🏅 *Result PDF + Rank*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ *+10 Points*  ❌ *0*  ⚡ *जल्दी = बेहतर Rank*\n\n"
+        f"👇 *Join करें!*"
     )
 
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🚀 I am Ready (0/5)", callback_data=f"ready_{chat_id}")
+        InlineKeyboardButton("🚀 Join Quiz (0/5)", callback_data=f"ready_{chat_id}")
     ]])
 
     msg = await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
 
-    # सेशन मेमोरी में सेव करना
+    # Session memory me save karna
     ready_sessions[chat_id] = {
         "ready_users": set(),
         "msg_id": msg.message_id,
@@ -95,7 +97,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
     }
 
 
-# बटन क्लिक होने पर चलने वाला फंक्शन (Admin Override Added)
+# Button click hone par chalne wala function (Admin Override Added)
 async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = update.effective_chat.id
@@ -125,7 +127,7 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="Markdown"
         )
         
-        # बिना इंतज़ार किए तुरंत क्विज़ शुरू
+        # Bina intezaar kiye turant start
         if chat_id in ready_sessions:
             q_data = ready_sessions.pop(chat_id)
             await run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"])
@@ -141,16 +143,16 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer("✅ आप क्विज़ के लिए तैयार हैं!")
 
     if count < 5:
-        # अगर 5 लोग नहीं हुए तो बटन का नंबर बढ़ाओ
+        # Agar 5 log nahi hue to button ka number badhao
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"🚀 I am Ready ({count}/5)", callback_data=f"ready_{chat_id}")
+            InlineKeyboardButton(f"🚀 Join Quiz ({count}/5)", callback_data=f"ready_{chat_id}")
         ]])
         try:
             await query.edit_message_reply_markup(reply_markup=keyboard)
         except Exception as e:
             logger.error(f"Markup edit error: {e}")
     else:
-        # 5 लोग आ गए! अब क्विज़ शुरू करने का समय
+        # 5 log aa gaye! Ab quiz shuru karne ka samay
         session["status"] = "countdown"
         try:
             await query.edit_message_reply_markup(reply_markup=None)
@@ -163,7 +165,7 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="Markdown"
         )
         
-        # 1 मिनट (60 सेकंड) का इंतज़ार
+        # 1 minute (60 seconds) ka intezaar
         await asyncio.sleep(60)
         
         if chat_id in ready_sessions:
@@ -181,7 +183,7 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
         "total_q": len(questions)
     }
     
-    await asyncio.sleep(2) # हलका सा गैप ताकि लोग अलर्ट हो जाएं
+    await asyncio.sleep(2) # Halka sa gap taaki log alert ho jayein
 
     for idx, q in enumerate(questions):
         if chat_id not in active_quizzes or not active_quizzes[chat_id]["running"]: 
@@ -202,21 +204,21 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
             active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
             active_quizzes[chat_id]["correct_idx"] = q["correct_index"]
             
-            # पोल के बंद होने तक का इंतज़ार (timer + 1 second)
+            # Poll ke band hone tak ka intezaar (timer + 1 second)
             await asyncio.sleep(timer + 1)
             
         except Exception as e:
             logger.error(f"Error sending poll in {chat_id}: {e}")
             await asyncio.sleep(2)
 
-    # जब सारे सवाल खत्म हो जाएं
+    # Jab saare sawaal khatam ho jayein
     if chat_id in active_quizzes:
         scores = active_quizzes[chat_id]["scores"]
         del active_quizzes[chat_id]
         await generate_and_send_pdf(context, chat_id, chat_title, scores)
 
 
-# पोल (Poll) में यूज़र का जवाब चेक करना
+# Poll me user ka jawab check karna
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
     poll_id = answer.poll_id
@@ -229,7 +231,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if selected == quiz_data["correct_idx"]:
                 if user_id not in quiz_data["scores"]: 
                     quiz_data["scores"][user_id] = {"name": name, "score": 0}
-                # सही जवाब पर 10 पॉइंट
+                # Sahi jawab par 10 points
                 quiz_data["scores"][user_id]["score"] += 10
                 
                 try:
@@ -246,10 +248,10 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
         await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी सही जवाब नहीं दिया।")
         return
 
-    # ज़्यादा स्कोर वाले यूज़र्स को ऊपर (Rank-wise) सेट करना
+    # Zyada score wale users ko upar (Rank-wise) set karna
     sorted_users = sorted(scores_dict.values(), key=lambda x: x["score"], reverse=True)
     
-    # टॉप 5 बच्चों का टेक्स्ट मैसेज
+    # Top 5 baccho ka text message
     text = "🏆 *FINAL LEADERBOARD*\n__________________________\n"
     for i, u in enumerate(sorted_users[:5]):
         medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
@@ -258,14 +260,14 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
     
     await context.bot.send_message(chat_id, text, parse_mode="Markdown")
 
-    # पूरी रैंक लिस्ट की PDF फाइल बनाना
+    # Poori rank list ki PDF file banana
     try:
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", 'B', 16)
         pdf.cell(200, 10, txt="Official Quiz Result", ln=True, align='C')
         
-        # Emojis या गलत font को साफ़ करना ताकि PDF क्रैश न हो
+        # Emojis ya galat font ko saaf karna taaki PDF crash na ho
         safe_chat_title = chat_title[:30].encode('ascii', 'ignore').decode() if chat_title else "Group Quiz"
         pdf.cell(200, 10, txt=f"Group: {safe_chat_title}", ln=True, align='C')
         pdf.ln(10)
@@ -290,7 +292,7 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
         file_path = f"/tmp/result_{chat_id}.pdf"
         pdf.output(file_path)
         
-        # PDF को ग्रुप में भेजना
+        # PDF ko group me bhejna
         await context.bot.send_document(
             chat_id, 
             document=open(file_path, "rb"),
