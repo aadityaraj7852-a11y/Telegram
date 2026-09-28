@@ -28,9 +28,14 @@ ASK_SUBJECT, ASK_CHAPTER, ASK_DOCX_FILE = range(3)
 ASK_AD_CONTENT, ASK_AD_BUTTON = range(100, 102)
 ASK_NOTE_TITLE, ASK_NOTE_CONTENT = range(200, 202)
 ASK_GROUP_ID, ASK_GROUP_COINRATE, ASK_GROUP_NEGATIVE, ASK_GROUP_ENTRYFEE = range(300, 304)
+
+# 🔥 BOOST STATES UPDATED
+ASK_BOOST_GROUP = 404
 ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
+
 ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
 
+# New Advanced States
 ASK_ADMIN_ID_ADD, ASK_ADMIN_GROUP, ASK_ADMIN_RIGHTS = range(700, 703)
 ASK_ADMIN_ID_REMOVE = 704
 ASK_BROADCAST_TARGET, ASK_BROADCAST_MSG = range(710, 712)
@@ -260,6 +265,8 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
+
+# ---------------- 3. SEND QUIZ (JSON FOR CHANNELS, ENGINE FOR GROUPS) ----------------
 async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -345,6 +352,7 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
             opts_list = [str(o) for o in item.get("option", [])]
             ans_str = str(item.get("answer", "")).strip().upper()
             sol = str(item.get("solution", "")).replace("<br>", "\n").replace("<br/>", "\n")
+            module = str(item.get("module", "GK"))
 
             q_clean_for_poll = re.sub(r'<[^>]+>', '', q)
             sol_clean_for_poll = re.sub(r'<[^>]+>', '', sol)
@@ -367,6 +375,7 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
             
             if len(safe_opts_poll) < 2: safe_opts_poll.extend(["Option 2", "Option 3", "Option 4"])
             safe_opts_poll = safe_opts_poll[:10]
+
 
             if not is_oversize:
                 await context.bot.send_poll(
@@ -404,7 +413,7 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
                 await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
             
             sent += 1
-            await asyncio.sleep(30) 
+            await asyncio.sleep(30)
         except Exception as e:
             logger.error(f"Error sending to channel: {e}")
             await asyncio.sleep(5)
@@ -413,6 +422,8 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
         await context.bot.send_message(chat_id=admin_id, text=f"✅ Channel me {sent} questions successfully bhej diye gaye hain!")
     except: pass
 
+
+# --- Group Quiz Logic ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -421,10 +432,11 @@ async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "all":
         context.user_data['sq_subj'] = None
         context.user_data['sq_chap'] = None
+        # 🔥 FIX 1: Timer stuck problem resolved by sending it directly to COUNT state
         kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
               [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
         await query.edit_message_text("⏱ **Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        return ASK_QUIZ_GROUP_TIMER
+        return ASK_QUIZ_GROUP_COUNT
     else:
         subj_id = int(data)
         context.user_data['sq_subj'] = subj_id
@@ -447,20 +459,26 @@ async def sendquiz_group_timer(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text("⏱ **Har question ke liye Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
     return ASK_QUIZ_GROUP_COUNT
 
+# 🔥 FIX 2: Custom Question Type-in logic
 async def sendquiz_group_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['sq_timer'] = int(query.data.split("_")[1])
     
-    kb = [[InlineKeyboardButton("10 Qs", callback_data="sqlen_10"), InlineKeyboardButton("20 Qs", callback_data="sqlen_20")],
-          [InlineKeyboardButton("50 Qs", callback_data="sqlen_50"), InlineKeyboardButton("100 Qs", callback_data="sqlen_100")]]
-    await query.edit_message_text("🔢 **Kitne questions ka quiz bhejna hai?**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    await query.edit_message_text(
+        "🔢 **Aap is quiz me kitne questions bhejna chahte hain?**\n\n"
+        "Kripya message me ek number type karein (Jaise: 10, 25, 50, 100):", 
+        parse_mode="Markdown"
+    )
     return ASK_QUIZ_GROUP_CONFIRM 
 
 async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    num = int(query.data.split("_")[1])
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ Kripya sirf number type karein (Jaise: 10, 20):")
+        return ASK_QUIZ_GROUP_CONFIRM
+        
+    num = int(text)
     chat_id = context.user_data['squiz_chat_id']
     subj = context.user_data.get('sq_subj')
     chap = context.user_data.get('sq_chap')
@@ -470,15 +488,16 @@ async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_T
     for g in db.get_active_groups():
         if g['chat_id'] == chat_id: chat_title = g['title']
 
-    await query.edit_message_text(f"✅ Awesome! Quiz {num} questions aur {timer}s timer ke sath group '{chat_title}' me launch ho raha hai...")
+    await update.message.reply_text(f"✅ Awesome! Quiz {num} questions aur {timer}s timer ke sath group '{chat_title}' me launch ho raha hai...")
     
     import quiz_engine
-    await quiz_engine.start_quiz_session(context, chat_id, chat_title, subj, chap, query.from_user.id, num, timer)
+    await quiz_engine.start_quiz_session(context, chat_id, chat_title, subj, chap, update.effective_user.id, num, timer)
     
     context.user_data.clear()
     return ConversationHandler.END
 
 
+# ---------------- ADD QUESTION (SUBJECT -> CHAPTER -> WORD FILE) ----------------
 async def addquestion_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -549,6 +568,8 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text("❌ Cancel ho gaya. Menu ke liye /menu dabayein.")
     return ConversationHandler.END
 
+
+# ---------------- DIRECT WORD FILE UPLOAD (OPTIONAL / OLD COMMAND) ----------------
 async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -604,6 +625,8 @@ async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     db.delete_question(int(context.args[0]))
     await update.effective_message.reply_text("✅ Question delete ho gaya.")
 
+
+# ---------------- OTHER ADMIN FUNCTIONS ----------------
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -783,6 +806,7 @@ async def addgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.register_group_settings(chat_id, update.effective_user.id)
     await update.effective_message.reply_text("✅ Group add ho gaya.")
 
+# ---------------- HTML NOTES (AUTO PUSH WITH BUTTONS) ----------------
 async def sendnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -915,10 +939,34 @@ async def auto_react_to_bot_message(context, chat_id, message_id):
     from utils.reactions import auto_react
     await auto_react(context, chat_id, message_id)
 
+# 🔥 BOOST SYSTEM UPDATED (Run inside Bot DM)
 async def boost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📝 Boost karne wala message likho:\n(Cancel ke liye /cancel)")
+    
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("🤖 Kripya bot ke private chat (DM) me aakar `/boost` command chalayein.", parse_mode="Markdown")
+        return ConversationHandler.END
+
+    groups = db.get_active_groups()
+    if not groups:
+        await update.effective_message.reply_text("❌ Koi group/channel list me nahi hai. Pehle bot ko add karein.")
+        return ConversationHandler.END
+        
+    kb = [[InlineKeyboardButton(g['title'], callback_data=f"bgrp_{g['chat_id']}")] for g in groups]
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="bgrp_cancel")])
+    await update.effective_message.reply_text("🚀 **Kis group/channel me Boost lagana hai?**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return ASK_BOOST_GROUP
+
+async def boost_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "bgrp_cancel":
+        await query.edit_message_text("❌ Boost Cancelled.")
+        return ConversationHandler.END
+        
+    context.user_data["boost_chat_id"] = int(query.data.split("_")[1])
+    await query.edit_message_text("📝 **Boost karne wala message likho:**\n(Cancel ke liye /cancel)", parse_mode="Markdown")
     return ASK_BOOST_CONTENT
 
 async def boost_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -938,27 +986,40 @@ async def boost_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
         await update.effective_message.reply_text("⚠️ Format sahi nahi hai. Example: `120 3`")
         return ASK_BOOST_SCHEDULE
+        
     every_min, times = int(parts[0]), int(parts[1])
-    chat = update.effective_chat
+    chat_id = context.user_data['boost_chat_id']
     btext = context.user_data.get("btext")
     burl = context.user_data.get("burl")
     rm = InlineKeyboardMarkup([[InlineKeyboardButton(btext, url=burl)]]) if btext else None
+    
     try:
-        sent = await context.bot.send_message(chat.id, context.user_data.get("boost_content"), reply_markup=rm)
-        await auto_react_to_bot_message(context, chat.id, sent.message_id)
-        job_id = db.create_boost_job(chat.id, context.user_data.get("boost_content"), btext, burl, every_min, times, True, update.effective_user.id)
+        sent = await context.bot.send_message(chat_id, context.user_data.get("boost_content"), reply_markup=rm)
+        await auto_react_to_bot_message(context, chat_id, sent.message_id)
+        job_id = db.create_boost_job(chat_id, context.user_data.get("boost_content"), btext, burl, every_min, times, True, update.effective_user.id)
         db.mark_boost_job_run(job_id, every_min)
-        await update.effective_message.reply_text("✅ Post bhej diya gaya!")
+        await update.effective_message.reply_text("✅ Post successfully bhej diya gaya hai!")
     except Exception as e:
         await update.effective_message.reply_text(f"❌ Error: {e}")
+        
     context.user_data.clear()
     return ConversationHandler.END
 
 async def boostlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
-    jobs = db.get_active_boost_jobs(update.effective_chat.id)
-    lines = ["🚀 *Active Boosts:*\n"] + [f"#{j['job_id']} — har {j['repost_every_minutes']} min me"]
-    await update.effective_message.reply_text("\n".join(lines) if jobs else "Koi active boost nahi hai.", parse_mode="Markdown")
+    groups = db.get_active_groups()
+    lines = ["🚀 *All Active Boosts (Global):*\n"]
+    found = False
+    for g in groups:
+        jobs = db.get_active_boost_jobs(g['chat_id'])
+        if jobs:
+            found = True
+            lines.append(f"📁 *{g['title']}*:")
+            for j in jobs:
+                lines.append(f"  • ID #{j['job_id']} — har {j['repost_every_minutes']} min me")
+    if not found:
+        lines.append("Koi active boost nahi hai.")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 async def stopboost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
