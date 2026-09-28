@@ -471,7 +471,7 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# --- Group Quiz Routing Fix (TIMER FREEZE FIXED) ---
+# --- Group Quiz Routing Fix ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -615,7 +615,7 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ---------------- ⚙️ GROUP SETTINGS IN DM (FIXED) ----------------
+# ---------------- ⚙️ GROUP SETTINGS IN DM ----------------
 async def groupsettings_start_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -696,7 +696,7 @@ async def groupsettings_coin_receive(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# ---------------- RESTORED OLD ADMIN COMMANDS TO PREVENT CRASHES ----------------
+# ---------------- RESTORED OLD ADMIN COMMANDS ----------------
 async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     if not context.args or not context.args[0].isdigit():
