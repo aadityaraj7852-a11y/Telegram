@@ -118,7 +118,6 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
                          InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
     
-    # ✏️ NEW BUTTON: EDIT QUESTION IN ADMIN MENU
     keyboard.append([InlineKeyboardButton("✏️ Edit Question", callback_data="amenu_editq")])
     keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
     
@@ -222,7 +221,7 @@ async def editq_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_EDIT_Q_SEARCH
 
     kb = []
-    for q in matches[:10]: # Top 10 matches dikhayega
+    for q in matches[:10]:
         short_q = q['question'][:30].replace('\n', ' ') + "..."
         kb.append([InlineKeyboardButton(short_q, callback_data=f"eqsel_{q['question_id']}")])
     kb.append([InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")])
@@ -392,14 +391,49 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ---------------- 3. SEND QUIZ TO GROUP/CHANNEL ----------------
+# ---------------- 3. POST AD (RESTORED) ----------------
+async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📝 Ad ka text/content likho:\n(Cancel ke liye /cancel)")
+    return ASK_AD_CONTENT
+
+async def postad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["ad_content"] = update.message.text
+    await update.effective_message.reply_text("🔘 Button chahiye? 'Button Text | https://link.com' format me likho.\nNahi chahiye to /skip likho.")
+    return ASK_AD_BUTTON
+
+async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    button_text, button_url = None, None
+    if text != "/skip" and "|" in text:
+        button_text, button_url = [x.strip() for x in text.split("|", 1)]
+    content = context.user_data.get("ad_content", "")
+    ad_id = db.create_ad(content, button_text, button_url, update.effective_user.id)
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]]) if button_text else None
+    groups = db.get_active_groups()
+    sent = 0
+    for g in groups:
+        try:
+            msg = await context.bot.send_message(g["chat_id"], content, reply_markup=reply_markup)
+            await auto_react_to_bot_message(context, g["chat_id"], msg.message_id)
+            sent += 1
+        except Exception:
+            db.deactivate_group(g["chat_id"])
+    db.increment_ad_sent(ad_id, sent)
+    await update.effective_message.reply_text(f"✅ Ad {sent} groups/channels me bhej diya gaya.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ---------------- 4. SEND QUIZ TO GROUP/CHANNEL ----------------
 async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
     
     groups = db.get_active_groups()
     if not groups:
-         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai.")
+         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai. Pehle bot ko kisi group me add karein.")
          return ConversationHandler.END
 
     kb = [[InlineKeyboardButton(f"📢 Channel: {g['title']}", callback_data=f"squiz_channel_{g['chat_id']}")] for g in groups]
@@ -614,7 +648,7 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ---------------- ⚙️ GROUP SETTINGS IN DM (FIXED) ----------------
+# ---------------- ⚙️ GROUP SETTINGS IN DM ----------------
 async def groupsettings_start_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -743,6 +777,14 @@ async def exportquestions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     path = export_questions_to_docx(questions)
     await update.effective_message.reply_document(document=open(path, "rb"), caption=f"📦 Total {len(questions)} questions export kiye.")
 
+async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Usage: /deletequestion <id>")
+        return
+    db.delete_question(int(context.args[0]))
+    await update.effective_message.reply_text("✅ Question delete ho gaya.")
+
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -802,9 +844,7 @@ async def userinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👤 *User Info*\n\nID: {u['user_id']}\nName: {u['first_name']}\nCoins: {u['coins']}\nQuizzes: {u['total_quizzes']}"
     await update.effective_message.reply_text(text, parse_mode="Markdown")
 
-# =========================================================================
-# 🚫 BAN AND UNBAN USER COMMANDS
-# =========================================================================
+# 🚫 BAN / UNBAN COMMANDS
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     if not context.args or not context.args[0].isdigit(): 
@@ -822,8 +862,6 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = int(context.args[0])
     db.set_ban(uid, False)
     await update.effective_message.reply_text(f"✅ User `{uid}` ko unban kar diya gaya hai.", parse_mode="Markdown")
-
-# =========================================================================
 
 async def withdrawals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
@@ -891,6 +929,21 @@ async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     context.user_data.clear()
     return ConversationHandler.END
+
+async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if len(context.args) < 2 or not context.args[0].isdigit(): return
+    note = db.get_note(int(context.args[0]))
+    if not note: return
+    try: chat_id = int(context.args[1])
+    except ValueError: return
+    clean_html = sanitize_for_telegram(note["content_html"])
+    try:
+        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
+            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
+        await update.effective_message.reply_text("✅ Note bhej diya gaya.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Error: {e}")
 
 async def pushnote_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
