@@ -1,7 +1,7 @@
 """
 quiz_engine.py
 Complete Advanced Quiz Engine
-Features: 5-Person Ready System, Admin Instant Start, PDF Leaderboards, Custom Timers, Fancy UI, Negative Marking.
+Features: 5-Person Ready System, Admin Instant Start, PDF Leaderboards, Custom Timers, Fancy UI, Negative Marking, Advanced Formatting Support.
 """
 
 import asyncio
@@ -57,7 +57,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         await context.bot.send_message(user_id, f"❌ Database se questions nikalne me error: {e}")
         return
 
-    # 🛠 FIX: Fetch valid chapters for the selected subject to filter properly
+    # Fetch valid chapters for the selected subject to filter properly
     valid_chapter_ids = None
     if subject_id:
         try:
@@ -108,7 +108,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
     timer = custom_timer if custom_timer else getattr(config, 'QUESTION_TIME', 15)
     subj_name = "Mixed (सभी विषय)" if not subject_id else "Selected Topic"
 
-    # 🔥 FANCY UI + Reward Display (+2, -1)
+    # FANCY UI + Reward Display (+2, -1)
     text = (
         f"╔══════════════════╗\n"
         f"🏆 *LIVE QUIZ — MockRise* 🏆\n"
@@ -130,7 +130,6 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
 
     try:
         msg = await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
-        # Notify admin in DM that it successfully launched in the group
         try:
             await context.bot.send_message(user_id, f"✅ Quiz UI सफलतापूर्वक '{chat_title}' ग्रुप में भेज दिया गया है। ग्रुप में जाकर 'Join' करें!")
         except:
@@ -163,7 +162,7 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("क्विज़ की प्रक्रिया आगे बढ़ चुकी है!", show_alert=True)
         return
 
-    # 🚀 ADMIN OVERRIDE LOGIC
+    # ADMIN OVERRIDE LOGIC
     if is_admin(user.id) or is_owner(user.id):
         session["status"] = "countdown"
         await query.answer("👑 Admin Action: Quiz तुरंत शुरू हो रहा है!", show_alert=True)
@@ -182,7 +181,7 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
             asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"], q_data["admin_id"]))
         return
 
-    # 👥 NORMAL USER LOGIC
+    # NORMAL USER LOGIC
     if user.id in session["ready_users"]:
         await query.answer("आप पहले से Ready हैं! दूसरों का इंतज़ार करें।", show_alert=True)
         return
@@ -234,18 +233,22 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
         if chat_id not in active_quizzes or not active_quizzes[chat_id]["running"]: 
             break
         
-        # ⚠️ GIANT TRY-EXCEPT BLOCK: Never let the loop crash!
         try:
-            # 🧹 QUESTION SANITIZE
-            raw_q = str(q.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
-            clean_q = re.sub(r'<[^>]+>', '', raw_q).strip()
-            if not clean_q: 
-                clean_q = "Question"
-            if len(clean_q) > 280:
-                clean_q = clean_q[:277] + "..."
-            question_text = f"Q{idx+1}/{len(questions)}: {clean_q}"
+            # 1. PROCESS QUESTION TEXT
+            # Keep original text for HTML message, including line breaks
+            raw_q_html = str(q.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n").strip()
+            if not raw_q_html:
+                raw_q_html = "प्रश्न उपलब्ध नहीं है।"
+            
+            # Clean version for standard poll (no HTML, no newlines)
+            clean_q_poll = re.sub(r'<[^>]+>', '', raw_q_html)
+            clean_q_poll = clean_q_poll.replace("\n", " ").replace("\r", "").strip()
+            if len(clean_q_poll) > 280:
+                clean_q_poll = clean_q_poll[:277] + "..."
+            
+            question_text_poll = f"Q{idx+1}/{len(questions)}: {clean_q_poll}"
 
-            # 🛠 OPTIONS SAFE PARSING & CLEANING
+            # 2. PROCESS OPTIONS
             raw_opts = q.get("options", [])
             if isinstance(raw_opts, str):
                 try:
@@ -260,11 +263,9 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
             if isinstance(raw_opts, list):
                 for opt in raw_opts:
                     opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
-                    
-                    # 🔥 FIX: Pura Kachra (###A, ###B, A., B.) hata do!
-                    opt_str = re.sub(r'###[A-D]\s*', '', opt_str)
+                    # Remove unwanted ###A, A., etc.
+                    opt_str = re.sub(r'^###[A-D]\s*', '', opt_str)
                     opt_str = re.sub(r'^[A-D][\.\)]\s*', '', opt_str.strip()).strip()
-                    
                     if len(opt_str) > 100:
                         opt_str = opt_str[:97] + "..."
                     if opt_str:
@@ -274,7 +275,7 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
                 clean_opts.append(f"Option {len(clean_opts)+1}")
             clean_opts = clean_opts[:10]
 
-            # 🛠 CORRECT INDEX SAFE BOUNDING
+            # 3. CORRECT INDEX
             correct_idx = q.get("correct_index", 0)
             try:
                 correct_idx = int(correct_idx)
@@ -282,65 +283,116 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
                 correct_idx = 0
             correct_idx = max(0, min(correct_idx, len(clean_opts) - 1))
 
-            # 🧹 EXPLANATION SANITIZE
-            raw_exp = str(q.get("explanation", "")).replace("<br>", "\n").replace("<br/>", "\n")
-            clean_exp = re.sub(r'<[^>]+>', '', raw_exp).strip()
-
-            try:
-                # 📡 ATTEMPT 1: SEND NATIVE TELEGRAM POLL
-                poll_msg = await context.bot.send_poll(
-                    chat_id=chat_id, 
-                    question=question_text, 
-                    options=clean_opts,
-                    type="quiz", 
-                    correct_option_id=correct_idx, 
-                    explanation=clean_exp[:197] + "..." if len(clean_exp) > 200 else (clean_exp if clean_exp else None),
-                    open_period=timer, 
-                    is_anonymous=False
-                )
-                
-                active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
-                active_quizzes[chat_id]["correct_idx"] = correct_idx
-                
-                # ⏱ Wait for timer
-                await asyncio.sleep(timer + 1)
-                
-                # 💡 SEND FULL EXPLANATION AFTER TIMER
-                if clean_exp:
-                    exp_text = f"💡 Q{idx+1} व्याख्या (Explanation):\n{clean_exp[:3900]}"
-                    try:
-                        await context.bot.send_message(chat_id, exp_text)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.5) 
-                
-            except Exception as e:
-                logger.error(f"Poll creation failed for Q{idx+1}: {e}")
-                # 🚀 ATTEMPT 2: BULLETPROOF FALLBACK (If Poll Fails)
+            # 4. EXPLANATION
+            raw_exp = str(q.get("explanation", "")).replace("<br>", "\n").replace("<br/>", "\n").strip()
+            clean_exp_poll = re.sub(r'<[^>]+>', '', raw_exp).strip()
+            
+            # Decide sending mode based on question length and presence of line breaks
+            is_complex = len(raw_q_html) > 200 or "\n" in raw_q_html
+            
+            if is_complex:
+                # ==========================================
+                # COMPLEX MODE: Text Message + Simple Poll + Spoiler Explanation
+                # ==========================================
                 try:
-                    opts_text = "\n".join([f"{chr(65+i)}. {o}" for i, o in enumerate(clean_opts)])
-                    # NO PARSE MODE - To prevent entity parsing crashes!
-                    await context.bot.send_message(chat_id, f"❓ {question_text}\n\n{opts_text}")
+                    # Send Question as formatted HTML message
+                    q_msg = f"<b>Q{idx+1}/{len(questions)}:</b>\n{raw_q_html}"
+                    if len(q_msg) > 4000:
+                        q_msg = q_msg[:4000] + "..."
+                    await context.bot.send_message(chat_id, q_msg, parse_mode="HTML")
+                    await asyncio.sleep(0.5)
+
+                    # Send Poll with options only
+                    poll_msg = await context.bot.send_poll(
+                        chat_id=chat_id,
+                        question="👆 ऊपर दिए गए प्रश्न का सही विकल्प चुनें:",
+                        options=clean_opts,
+                        type="quiz",
+                        correct_option_id=correct_idx,
+                        open_period=timer,
+                        is_anonymous=False
+                    )
                     
-                    await asyncio.sleep(timer)
+                    active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
+                    active_quizzes[chat_id]["correct_idx"] = correct_idx
                     
+                    # Wait for timer
+                    await asyncio.sleep(timer + 1)
+                    
+                    # Send Explanation in Spoiler
                     ans_letter = chr(65+correct_idx)
-                    sol_fallback = f"💡 सही उत्तर (Correct Answer): {ans_letter}\n"
-                    if clean_exp:
-                        sol_fallback += f"\nव्याख्या (Explanation):\n{clean_exp[:3900]}"
-                        
-                    await context.bot.send_message(chat_id, sol_fallback)
+                    sol_html = f"💡 <b>Q{idx+1} सही उत्तर: {ans_letter}</b>\n"
+                    if raw_exp:
+                        sol_html += f"<b>व्याख्या:</b>\n<tg-spoiler>{raw_exp}</tg-spoiler>"
+                    
+                    if len(sol_html) > 4000:
+                         sol_html = sol_html[:4000] + "</tg-spoiler>"
+                         
+                    await context.bot.send_message(chat_id, sol_html, parse_mode="HTML")
                     await asyncio.sleep(1.5)
-                except Exception as inner_e:
-                    logger.error(f"Fallback also failed: {inner_e}")
+
+                except Exception as complex_e:
+                    logger.error(f"Complex mode failed for Q{idx+1}: {complex_e}")
+                    # If HTML parsing fails, send plain text
                     try:
-                        await context.bot.send_message(chat_id, f"⚠️ Q{idx+1} लोड नहीं हो सका। अगले प्रश्न पर जा रहे हैं...")
+                        plain_q = re.sub(r'<[^>]+>', '', raw_q_html)
+                        await context.bot.send_message(chat_id, f"Q{idx+1}:\n{plain_q}")
+                        await asyncio.sleep(1)
                     except:
                         pass
-                    await asyncio.sleep(2)
+
+            else:
+                # ==========================================
+                # SIMPLE MODE: Native Telegram Poll
+                # ==========================================
+                try:
+                    poll_msg = await context.bot.send_poll(
+                        chat_id=chat_id, 
+                        question=question_text_poll, 
+                        options=clean_opts,
+                        type="quiz", 
+                        correct_option_id=correct_idx, 
+                        explanation=clean_exp_poll[:197] + "..." if len(clean_exp_poll) > 200 else (clean_exp_poll if clean_exp_poll else None),
+                        open_period=timer, 
+                        is_anonymous=False
+                    )
+                    
+                    active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
+                    active_quizzes[chat_id]["correct_idx"] = correct_idx
+                    
+                    # Wait for timer
+                    await asyncio.sleep(timer + 1)
+                    
+                    # Send Full Explanation if it exists and is long
+                    if raw_exp and len(clean_exp_poll) > 190:
+                         exp_text = f"💡 <b>Q{idx+1} विस्तृत व्याख्या:</b>\n<tg-spoiler>{raw_exp}</tg-spoiler>"
+                         if len(exp_text) > 4000:
+                             exp_text = exp_text[:4000] + "</tg-spoiler>"
+                         try:
+                             await context.bot.send_message(chat_id, exp_text, parse_mode="HTML")
+                         except:
+                             pass
+                         await asyncio.sleep(1.5) 
+
+                except Exception as simple_e:
+                    logger.error(f"Simple poll failed for Q{idx+1}: {simple_e}")
+                    # Fallback to pure text message without parse mode
+                    try:
+                        opts_text = "\n".join([f"{chr(65+i)}. {o}" for i, o in enumerate(clean_opts)])
+                        await context.bot.send_message(chat_id, f"❓ {question_text_poll}\n\n{opts_text}")
+                        await asyncio.sleep(timer)
+                        ans_letter = chr(65+correct_idx)
+                        sol_fallback = f"💡 सही उत्तर: {ans_letter}\n"
+                        if clean_exp_poll:
+                            sol_fallback += f"\nव्याख्या:\n{clean_exp_poll[:3900]}"
+                        await context.bot.send_message(chat_id, sol_fallback)
+                        await asyncio.sleep(1.5)
+                    except Exception as inner_e:
+                         logger.error(f"Ultimate fallback failed: {inner_e}")
+                         pass
 
         except Exception as giant_e:
-            logger.error(f"Giant Try-Except Block Caught Error: {giant_e}")
+            logger.error(f"Giant Try-Except Block Caught Error in Q{idx+1}: {giant_e}")
             await asyncio.sleep(1)
 
     # Jab saare sawaal khatam ho jayein
