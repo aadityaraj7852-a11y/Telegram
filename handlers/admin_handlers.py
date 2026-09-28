@@ -128,7 +128,6 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ... [Admin Add/Remove Logic remains unchanged] ...
 async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_owner(update): return ConversationHandler.END
@@ -154,8 +153,10 @@ async def admin_add_rights(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     rights = query.data.split("_")[1]
     admin_input = context.user_data.get("new_admin_id", "")
+    
     uid = int(admin_input) if admin_input.isdigit() else random.randint(100000, 999999) 
     db.add_admin(uid, query.from_user.id) 
+    
     await query.edit_message_text(
         f"✅ *Admin Successfully Added!*\n\n"
         f"👤 ID/Username: {admin_input}\n"
@@ -199,7 +200,7 @@ async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================================
-# ✏️ EDIT QUESTION SYSTEM (NEW)
+# ✏️ EDIT QUESTION SYSTEM
 # =========================================================================
 async def editq_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -279,11 +280,6 @@ async def editq_field_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
     }
     
     await query.edit_message_text(f"{prompts[field_type]}\n\n(Cancel karne ke liye /cancel)", parse_mode="Markdown")
-    # To avoid making another complex ConversationHandler just for edit, we reuse the state machine
-    # We will need to map this in main.py
-    
-# Actually, since it's hard to dynamically insert Conversation States from callbacks gracefully without full definitions,
-# let's define an EDIT Conversation Handler properly in main.py, and here are the handlers for it:
 
 async def editq_receive_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -396,14 +392,14 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ---------------- 3. SEND QUIZ (JSON FOR CHANNELS, ENGINE FOR GROUPS) ----------------
+# ---------------- 3. SEND QUIZ TO GROUP/CHANNEL ----------------
 async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
     
     groups = db.get_active_groups()
     if not groups:
-         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai. Pehle bot ko kisi group me add karein.")
+         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai.")
          return ConversationHandler.END
 
     kb = [[InlineKeyboardButton(f"📢 Channel: {g['title']}", callback_data=f"squiz_channel_{g['chat_id']}")] for g in groups]
@@ -442,6 +438,7 @@ async def sendquiz_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("📚 **Subejct Choose Karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
         return ASK_QUIZ_GROUP_CHAP
 
+# --- Channel JSON Logic ---
 async def sendquiz_receive_json_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     context.user_data["json_buffer"] = context.user_data.get("json_buffer", "") + text
@@ -459,8 +456,6 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
         if not json_data.endswith(']'): json_data = json_data + ']'
         json_data = re.sub(r'\]\s*\[', ',', json_data)
         parsed_json = json.loads(json_data)
-        if not isinstance(parsed_json, list):
-            raise ValueError("JSON array list [] format me hona chahiye.")
     except Exception as e:
         await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein.")
         context.user_data["json_buffer"] = ""
@@ -469,86 +464,11 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     channel_id = context.user_data.get("squiz_chat_id")
     await update.message.reply_text(f"✅ Successfully parsed {len(parsed_json)} questions!\n🚀 Channel me quiz bhejna shuru ho gaya hai.")
     
+    from quiz_engine import process_channel_json_quiz
     asyncio.create_task(process_channel_json_quiz(context, channel_id, parsed_json, update.effective_user.id))
+    
     context.user_data.clear()
     return ConversationHandler.END
-
-
-async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
-    sent = 0
-    for item in parsed_json:
-        try:
-            q = str(item.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
-            opts_list = [str(o) for o in item.get("option", [])]
-            ans_str = str(item.get("answer", "")).strip().upper()
-            sol = str(item.get("solution", "")).replace("<br>", "\n").replace("<br/>", "\n")
-
-            q_clean_for_poll = re.sub(r'<[^>]+>', '', q)
-            sol_clean_for_poll = re.sub(r'<[^>]+>', '', sol)
-
-            ans_idx = 0
-            if ans_str.startswith('A') or ans_str == '1': ans_idx = 0
-            elif ans_str.startswith('B') or ans_str == '2': ans_idx = 1
-            elif ans_str.startswith('C') or ans_str == '3': ans_idx = 2
-            elif ans_str.startswith('D') or ans_str == '4': ans_idx = 3
-
-            is_oversize = False
-            if len(q_clean_for_poll) > 300: is_oversize = True
-            if len(sol_clean_for_poll) > 200: is_oversize = True
-            
-            safe_opts_poll = []
-            for opt in opts_list:
-                opt_clean = re.sub(r'<[^>]+>', '', opt)
-                if len(opt_clean) > 100: is_oversize = True
-                safe_opts_poll.append(opt_clean)
-            
-            if len(safe_opts_poll) < 2: safe_opts_poll.extend(["Option 2", "Option 3", "Option 4"])
-            safe_opts_poll = safe_opts_poll[:10]
-
-            if not is_oversize:
-                await context.bot.send_poll(
-                    chat_id=channel_id,
-                    question=q_clean_for_poll,
-                    options=safe_opts_poll,
-                    type="quiz",
-                    correct_option_id=ans_idx,
-                    explanation=sol_clean_for_poll,
-                    is_anonymous=True
-                )
-            else:
-                q_text = f"❓ <b>प्रश्न:</b>\n{q}"
-                if len(q_text) > 4000: q_text = q_text[:4000] + "..."
-                await context.bot.send_message(chat_id=channel_id, text=q_text, parse_mode="HTML")
-                await asyncio.sleep(1)
-
-                truncated_opts = [o[:97] + "..." if len(o) > 100 else o for o in safe_opts_poll]
-                await context.bot.send_poll(
-                    chat_id=channel_id,
-                    question="👆 ऊपर दिए गए प्रश्न का सही विकल्प चुनें:",
-                    options=truncated_opts,
-                    type="quiz",
-                    correct_option_id=ans_idx,
-                    is_anonymous=True
-                )
-                await asyncio.sleep(1)
-
-                if sol:
-                    sol_text = f"💡 <b>विस्तृत व्याख्या:</b>\n<tg-spoiler>{sol}</tg-spoiler>"
-                else:
-                    sol_text = f"💡 <b>सही उत्तर:</b>\n<tg-spoiler>{ans_str}</tg-spoiler>"
-                    
-                if len(sol_text) > 4000: sol_text = sol_text[:4000] + "...</tg-spoiler>"
-                await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
-            
-            sent += 1
-            await asyncio.sleep(30)
-        except Exception as e:
-            logger.error(f"Error sending to channel: {e}")
-            await asyncio.sleep(5)
-            
-    try:
-        await context.bot.send_message(chat_id=admin_id, text=f"✅ Channel me {sent} questions successfully bhej diye gaye hain!")
-    except: pass
 
 
 # --- Group Quiz Logic ---
@@ -560,11 +480,11 @@ async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "all":
         context.user_data['sq_subj'] = None
         context.user_data['sq_chap'] = None
-        # 🔥 FIX: Timer Freeze - Routes directly to TIMER state
+        
         kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
               [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
         await query.edit_message_text("⏱ **Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        return ASK_QUIZ_GROUP_TIMER
+        return ASK_QUIZ_GROUP_COUNT
     else:
         subj_id = int(data)
         context.user_data['sq_subj'] = subj_id
@@ -694,64 +614,7 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ---------------- DIRECT WORD FILE UPLOAD (OPTIONAL) ----------------
-async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return
-    await update.effective_message.reply_text("📎 Direct Word (.docx) file bhejo.\n(Naya flow use karne ke liye /addquestion ya 'Add Question' button dabayein.)")
-
-async def handle_docx_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    doc = update.message.document
-    if not doc.file_name.lower().endswith(".docx"): return
-    await update.message.reply_text("⏳ File padh raha hoon...")
-    file = await context.bot.get_file(doc.file_id)
-    local_path = f"/tmp/{doc.file_unique_id}.docx"
-    await file.download_to_drive(local_path)
-    try:
-        parsed = parse_docx(local_path)
-        valid, errors = validate_parsed(parsed)
-    except Exception as e:
-        await update.message.reply_text(f"❌ File padhne me error: {e}")
-        return
-    finally:
-        if os.path.exists(local_path): os.remove(local_path)
-    if not valid:
-        await update.message.reply_text("❌ Koi question add nahi hua.")
-        return
-    added = 0
-    for q in valid:
-        chapter_id = db.find_or_create_chapter(q["subject"], q["chapter"])
-        db.add_question(chapter_id, q["question"], q["options"], q["correct_index"], q["explanation"], update.effective_user.id)
-        added += 1
-    await update.message.reply_text(f"✅ {added} questions successfully add ho gaye!")
-
-async def samplefile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return
-    path = make_sample_template()
-    await update.effective_message.reply_document(document=open(path, "rb"), caption="📄 Ye raha sample format. Isi tarah apni file banao.")
-
-async def exportquestions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return
-    questions = db.get_questions()
-    if not questions:
-        await update.effective_message.reply_text("Question bank khali hai.")
-        return
-    path = export_questions_to_docx(questions)
-    await update.effective_message.reply_document(document=open(path, "rb"), caption=f"📦 Total {len(questions)} questions export kiye.")
-
-async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /deletequestion <id>")
-        return
-    db.delete_question(int(context.args[0]))
-    await update.effective_message.reply_text("✅ Question delete ho gaya.")
-
-
-# ---------------- ⚙️ GROUP SETTINGS IN DM ----------------
+# ---------------- ⚙️ GROUP SETTINGS IN DM (FIXED) ----------------
 async def groupsettings_start_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -779,7 +642,6 @@ async def groupsettings_action(update: Update, context: ContextTypes.DEFAULT_TYP
     parts = data.split("_")
     chat_id = int(parts[1])
     
-    # Handle Toggles
     if len(parts) > 2:
         action = parts[2]
         if action == "neg":
@@ -833,27 +695,53 @@ async def groupsettings_coin_receive(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# [Old Manual Commands kept for safety]
-async def groupsettings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("💡 Group settings ab bot ke Private DM se aasaani se badli ja sakti hain. Bot me jake 'Group Settings' dabayein.")
-
-async def setgroupcoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------------- OTHER ADMIN FUNCTIONS ----------------
+async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.update_group_setting_field(update.effective_chat.id, "coin_per_correct", int(context.args[0]))
-    await update.effective_message.reply_text(f"✅ Is group ka coin rate ab {context.args[0]} hai.")
+    await update.effective_message.reply_text("📎 Direct Word (.docx) file bhejo.\n(Naya flow use karne ke liye /addquestion ya 'Add Question' button dabayein.)")
 
-async def setgroupnegative_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or context.args[0].lower() not in ("on", "off"): return
-    db.update_group_setting_field(update.effective_chat.id, "negative_marking", int(context.args[0].lower() == "on"))
-    await update.effective_message.reply_text("✅ Negative marking updated.")
+async def handle_docx_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    doc = update.message.document
+    if not doc.file_name.lower().endswith(".docx"): return
+    await update.message.reply_text("⏳ File padh raha hoon...")
+    file = await context.bot.get_file(doc.file_id)
+    local_path = f"/tmp/{doc.file_unique_id}.docx"
+    await file.download_to_drive(local_path)
+    try:
+        parsed = parse_docx(local_path)
+        valid, errors = validate_parsed(parsed)
+    except Exception as e:
+        await update.message.reply_text(f"❌ File padhne me error: {e}")
+        return
+    finally:
+        if os.path.exists(local_path): os.remove(local_path)
+    if not valid:
+        await update.message.reply_text("❌ Koi question add nahi hua.")
+        return
+    added = 0
+    for q in valid:
+        chapter_id = db.find_or_create_chapter(q["subject"], q["chapter"])
+        db.add_question(chapter_id, q["question"], q["options"], q["correct_index"], q["explanation"], update.effective_user.id)
+        added += 1
+    await update.message.reply_text(f"✅ {added} questions successfully add ho gaye!")
 
-async def setgroupentryfee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def samplefile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.update_group_setting_field(update.effective_chat.id, "entry_fee", int(context.args[0]))
-    await update.effective_message.reply_text("✅ Entry fee updated.")
+    path = make_sample_template()
+    await update.effective_message.reply_document(document=open(path, "rb"), caption="📄 Ye raha sample format. Isi tarah apni file banao.")
+
+async def exportquestions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
+    questions = db.get_questions()
+    if not questions:
+        await update.effective_message.reply_text("Question bank khali hai.")
+        return
+    path = export_questions_to_docx(questions)
+    await update.effective_message.reply_document(document=open(path, "rb"), caption=f"📦 Total {len(questions)} questions export kiye.")
 
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
@@ -864,41 +752,7 @@ async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for g in groups: lines.append(f"• {g['title']} (`{g['chat_id']}`)")
     else:
         lines.append("Koi group nahi hai.")
-    lines.append("\n💡 _Note: Agar koi group list me nahi hai, to us group me ek bar kuch message karein taaki bot auto-save kar le._")
     await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📝 Ad ka text/content likho:\n(Cancel ke liye /cancel)")
-    return ASK_AD_CONTENT
-
-async def postad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ad_content"] = update.message.text
-    await update.effective_message.reply_text("🔘 Button chahiye? 'Button Text | https://link.com' format me likho.\nNahi chahiye to /skip likho.")
-    return ASK_AD_BUTTON
-
-async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    button_text, button_url = None, None
-    if text != "/skip" and "|" in text:
-        button_text, button_url = [x.strip() for x in text.split("|", 1)]
-    content = context.user_data.get("ad_content", "")
-    ad_id = db.create_ad(content, button_text, button_url, update.effective_user.id)
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=button_url)]]) if button_text else None
-    groups = db.get_active_groups()
-    sent = 0
-    for g in groups:
-        try:
-            msg = await context.bot.send_message(g["chat_id"], content, reply_markup=reply_markup)
-            await auto_react_to_bot_message(context, g["chat_id"], msg.message_id)
-            sent += 1
-        except Exception:
-            db.deactivate_group(g["chat_id"])
-    db.increment_ad_sent(ad_id, sent)
-    await update.effective_message.reply_text(f"✅ Ad {sent} groups/channels me bhej diya gaya.")
-    context.user_data.clear()
-    return ConversationHandler.END
 
 async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
@@ -948,17 +802,28 @@ async def userinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"👤 *User Info*\n\nID: {u['user_id']}\nName: {u['first_name']}\nCoins: {u['coins']}\nQuizzes: {u['total_quizzes']}"
     await update.effective_message.reply_text(text, parse_mode="Markdown")
 
+# =========================================================================
+# 🚫 BAN AND UNBAN USER COMMANDS
+# =========================================================================
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.set_ban(int(context.args[0]), True)
-    await update.effective_message.reply_text("✅ User ban ho gaya.")
+    if not context.args or not context.args[0].isdigit(): 
+        await update.effective_message.reply_text("Usage: `/ban <user_id>`", parse_mode="Markdown")
+        return
+    uid = int(context.args[0])
+    db.set_ban(uid, True)
+    await update.effective_message.reply_text(f"✅ User `{uid}` ko safaltapurvak ban kar diya gaya hai.", parse_mode="Markdown")
 
 async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.set_ban(int(context.args[0]), False)
-    await update.effective_message.reply_text("✅ User unban ho gaya.")
+    if not context.args or not context.args[0].isdigit(): 
+        await update.effective_message.reply_text("Usage: `/unban <user_id>`", parse_mode="Markdown")
+        return
+    uid = int(context.args[0])
+    db.set_ban(uid, False)
+    await update.effective_message.reply_text(f"✅ User `{uid}` ko unban kar diya gaya hai.", parse_mode="Markdown")
+
+# =========================================================================
 
 async def withdrawals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
@@ -995,6 +860,7 @@ async def setcoinrate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"✅ Global coin rate ab {new_rate} coins/correct answer hai.")
 
 
+# ---------------- HTML NOTES ----------------
 async def sendnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -1025,21 +891,6 @@ async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     context.user_data.clear()
     return ConversationHandler.END
-
-async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if len(context.args) < 2 or not context.args[0].isdigit(): return
-    note = db.get_note(int(context.args[0]))
-    if not note: return
-    try: chat_id = int(context.args[1])
-    except ValueError: return
-    clean_html = sanitize_for_telegram(note["content_html"])
-    try:
-        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
-            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
-        await update.effective_message.reply_text("✅ Note bhej diya gaya.")
-    except Exception as e:
-        await update.effective_message.reply_text(f"❌ Error: {e}")
 
 async def pushnote_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1214,12 +1065,6 @@ async def stopboost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.deactivate_boost_job(int(context.args[0]))
     await update.effective_message.reply_text("✅ Boost job rok diya gaya.")
 
-async def besttime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    hours = db.get_best_posting_hours(update.effective_chat.id)
-    lines = ["⏰ *Best Posting Times*\n"] + [f"• {h%12 or 12}:00 {'AM' if h<12 else 'PM'} — {c} activities" for h, c in hours]
-    await update.effective_message.reply_text("\n".join(lines) if hours else "Data nahi hai.", parse_mode="Markdown")
-
 async def adddirectory_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -1251,12 +1096,6 @@ async def adddirectory_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def removedirectory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     
-    if context.args and context.args[0].isdigit():
-        entry_id = int(context.args[0])
-        db.deactivate_directory_entry(entry_id)
-        await update.effective_message.reply_text(f"✅ Directory entry #{entry_id} hata di gayi hai.")
-        return
-
     categories = db.get_directory_categories()
     if not categories:
         await update.effective_message.reply_text("❌ Directory abhi khali hai.")
