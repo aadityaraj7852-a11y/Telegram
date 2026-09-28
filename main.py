@@ -111,6 +111,24 @@ def build_app():
 
     app.add_handler(CallbackQueryHandler(uh.menu_router, pattern=r"^menu_"))
 
+    # ---- Ready Button (5 User System) ----
+    app.add_handler(CallbackQueryHandler(quiz_engine.handle_ready_callback, pattern=r"^ready_"))
+    app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
+
+    # ---- Remote Quiz Launcher Flow (Admin) ----
+    rq_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ah.remote_quiz_start, pattern=r"^amenu_remotequiz$")],
+        states={
+            ah.ASK_REMOTE_GROUP: [CallbackQueryHandler(ah.remote_quiz_group, pattern=r"^rqgrp_|rq_cancel$")],
+            ah.ASK_REMOTE_SUBJ: [CallbackQueryHandler(ah.remote_quiz_subj, pattern=r"^rqsubj_")],
+            ah.ASK_REMOTE_CHAP: [CallbackQueryHandler(ah.remote_quiz_chap, pattern=r"^rqchap_")],
+            ah.ASK_REMOTE_TIMER: [CallbackQueryHandler(ah.remote_quiz_timer, pattern=r"^rqtime_")],
+            ah.ASK_REMOTE_LEN: [CallbackQueryHandler(ah.remote_quiz_len, pattern=r"^rqlen_")],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    )
+    app.add_handler(rq_conv)
+
     # ---- Direct Button Mapping for Admin Panel ----
     app.add_handler(CallbackQueryHandler(ah.uploadword_prompt, pattern=r"^amenu_uploadword$"))
     app.add_handler(CallbackQueryHandler(ah.samplefile_cmd, pattern=r"^amenu_sample$"))
@@ -203,7 +221,6 @@ def build_app():
     app.add_handler(CallbackQueryHandler(uh.duel_length_selected, pattern=r"^duellen_"))
     app.add_handler(CallbackQueryHandler(uh.duel_accept_callback, pattern=r"^duelaccept_"))
     app.add_handler(CallbackQueryHandler(uh.duel_decline_callback, pattern=r"^dueldecline_"))
-    app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
 
     app.add_handler(CommandHandler("pushnote", ah.pushnote_cmd))
     app.add_handler(CommandHandler("notelist", ah.notelist_cmd))
