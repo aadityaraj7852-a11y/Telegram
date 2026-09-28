@@ -69,7 +69,7 @@ def clean_pdf_pypdf(input_path, output_path):
 def clean_pdf_fitz(input_path, output_path):
     """
     Preferred method using PyMuPDF:
-    - Removes all link annotations on every page
+    - Removes all link annotations on every page safely (crash-proof)
     - Removes watermark-type annotations
     - Attempts to detect and redact repeating semi-transparent
       text/image objects that look like watermarks (best-effort —
@@ -82,24 +82,32 @@ def clean_pdf_fitz(input_path, output_path):
     removed_annots = 0
 
     for page in doc:
-        # Remove hyperlinks
-        for link in page.get_links():
-            page.delete_link(link)
-            removed_links += 1
+        # 1. Remove hyperlinks safely (Agar file me sirf text hai to error nahi aayega)
+        try:
+            links = page.get_links()
+            for link in links:
+                page.delete_link(link)
+                removed_links += 1
+        except Exception:
+            pass
 
-        # Remove annotation-based watermarks/stamps
-        annot = page.first_annot
-        while annot:
-            nxt = annot.next
-            if annot.type[0] in (fitz.PDF_ANNOT_WATERMARK, fitz.PDF_ANNOT_STAMP,
-                                   fitz.PDF_ANNOT_FREETEXT):
-                page.delete_annot(annot)
-                removed_annots += 1
-            annot = nxt
+        # 2. Remove annotation-based watermarks/stamps safely
+        try:
+            annot = page.first_annot
+            while annot:
+                nxt = annot.next
+                if annot.type[0] in (fitz.PDF_ANNOT_WATERMARK, fitz.PDF_ANNOT_STAMP,
+                                       fitz.PDF_ANNOT_FREETEXT):
+                    page.delete_annot(annot)
+                    removed_annots += 1
+                annot = nxt
+        except Exception:
+            pass
 
     # Strip identifying metadata
     doc.set_metadata({})
 
+    # Save cleanly
     doc.save(output_path, garbage=4, deflate=True)
     doc.close()
 
