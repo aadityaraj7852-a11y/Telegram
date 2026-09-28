@@ -7,6 +7,7 @@ service ke roop me run karo (python main.py).
 import logging
 import os
 import threading
+import warnings
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
@@ -14,6 +15,10 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     PollAnswerHandler, ConversationHandler, ChatMemberHandler, filters
 )
+from telegram.warnings import PTBUserWarning
+
+# Faltu ki PTBUserWarning (ConversationHandler wali) ko hide karne ke liye
+warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 import config
 import database as db
@@ -28,16 +33,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# =========================================================================
-# DUMMY SERVER (Port Clash Fix)
-# =========================================================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
         self.wfile.write(b"Bot is alive and running!")
-        
     def log_message(self, format, *args):
         pass 
 
@@ -47,14 +48,10 @@ def keep_alive_server():
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
         server.serve_forever()
     except OSError:
-        # Agar Gunicorn pehle se port use kar raha hai to error nahi aayega
         pass
-# =========================================================================
-
 
 async def track_group_membership(update: Update, context):
     chat = update.effective_chat
-    # 'channel' add kar diya gaya hai taaki channels bhi auto-save ho jayein
     if chat.type in ("group", "supergroup", "channel"):
         db.upsert_group(chat.id, chat.title)
 
@@ -112,6 +109,18 @@ def build_app():
     app.add_handler(CommandHandler("referral", uh.referral_cmd))
     app.add_handler(CommandHandler("withdraw", uh.withdraw_cmd))
     app.add_handler(CommandHandler("subjects", uh.subjects_cmd))
+
+    # ==============================================================
+    # PDF CLEANER (USER FLOW) - Added BEFORE menu_router
+    # ==============================================================
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(uh.cleanpdf_start, pattern=r"^menu_cleanpdf$"), CommandHandler("cleanpdf", uh.cleanpdf_start)],
+        states={
+            uh.ASK_PDF: [MessageHandler(filters.ALL & ~filters.COMMAND, uh.cleanpdf_process)],
+        },
+        fallbacks=[CommandHandler("cancel", uh.cleanpdf_cancel)],
+    ))
+    # ==============================================================
 
     app.add_handler(CallbackQueryHandler(uh.menu_router, pattern=r"^menu_"))
 
@@ -250,7 +259,6 @@ def build_app():
     app.add_handler(CommandHandler("deletequestion", ah.deletequestion_cmd))
     app.add_handler(MessageHandler(filters.Document.FileExtension("docx"), ah.handle_docx_upload))
     app.add_handler(MessageHandler(filters.Document.FileExtension("db"), ah.handle_db_restore_upload))
-    app.add_handler(MessageHandler(filters.Document.PDF, ah.handle_pdf_clean_upload))
 
     app.add_handler(CommandHandler("addadmin", ah.addadmin_cmd))
     app.add_handler(CommandHandler("removeadmin", ah.removeadmin_cmd))
