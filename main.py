@@ -1,7 +1,6 @@
 """
 main.py
 Bot ka entry point. 
-Render pe isko "Background Worker" service ke roop me run karein.
 Start Command: python main.py
 """
 
@@ -173,9 +172,9 @@ def build_app():
         allow_reentry=True
     ))
 
-    # ✏️ EDIT QUESTION FLOW
+    # ✏️ EDIT QUESTION FLOW (Added CommandHandler here)
     app.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(ah.editq_start, pattern=r"^amenu_editq$")],
+        entry_points=[CommandHandler("editquestion", ah.editq_start), CallbackQueryHandler(ah.editq_start, pattern=r"^amenu_editq$")],
         states={
             ah.ASK_EDIT_Q_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.editq_search)],
             ah.ASK_EDIT_Q_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.editq_receive_value)],
@@ -217,7 +216,6 @@ def build_app():
     ))
 
     app.add_handler(CallbackQueryHandler(ah.pushnote_action, pattern=r"^pushnote_"))
-
     app.add_handler(CallbackQueryHandler(ah.uploadword_prompt, pattern=r"^amenu_uploadword$"))
     app.add_handler(CallbackQueryHandler(ah.samplefile_cmd, pattern=r"^amenu_sample$"))
     app.add_handler(CallbackQueryHandler(ah.exportquestions_cmd, pattern=r"^amenu_export$"))
@@ -332,7 +330,6 @@ def main():
     app = build_app()
     logger.info("Bot start ho raha hai...")
     
-    # 🔥 NETWORK FIX: Drop pending updates and add timeouts to prevent crashes
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
