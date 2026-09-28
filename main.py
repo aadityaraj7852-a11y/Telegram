@@ -17,7 +17,6 @@ from telegram.ext import (
 )
 from telegram.warnings import PTBUserWarning
 
-# Faltu ki PTBUserWarning (ConversationHandler wali) ko hide karne ke liye
 warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 import config
@@ -51,25 +50,15 @@ def keep_alive_server():
         pass
 
 
-# =========================================================================
-# 🚀 NAYA GLOBAL TRACKER (100% AUTOMATIC GROUP/CHANNEL FETCHING)
-# =========================================================================
 async def global_tracker(update: Update, context):
-    """
-    Ye tracker Telegram se aane wale har ek signal (Message, Command, Channel Post, Button Click) 
-    par chalega. Jaise hi us group ya channel se koi bhi connection banega, bot usko save kar lega.
-    """
     chat = update.effective_chat
-    # Agar chat Group, Supergroup ya Channel hai, to turant database me daalo
     if chat and chat.type in ("group", "supergroup", "channel"):
         db.upsert_group(chat.id, chat.title)
 
     user = update.effective_user
-    # User ka record bhi update karo (Channels me user nahi hota isliye check lagaya hai)
     if user and not user.is_bot:
         db.upsert_user(user.id, user.username, user.first_name)
         db.touch_online(user.id)
-# =========================================================================
 
 
 async def run_due_boost_jobs(context):
@@ -87,6 +76,12 @@ async def run_due_boost_jobs(context):
         except Exception:
             db.deactivate_boost_job(job["job_id"])
 
+async def track_user_activity(update: Update, context):
+    if update.effective_user:
+        user = update.effective_user
+        db.upsert_user(user.id, user.username, user.first_name)
+        db.touch_online(user.id)
+
 async def admin_menu_router(update: Update, context):
     query = update.callback_query
     await query.answer()
@@ -102,7 +97,6 @@ def build_app():
     db.init_db()
     app = Application.builder().token(config.BOT_TOKEN).build()
 
-    # 🚀 Global Tracker ko sabse pehle (group=-1) lagaya gaya hai
     app.add_handler(TypeHandler(Update, global_tracker), group=-1)
 
     app.add_handler(CommandHandler("start", uh.start_cmd))
@@ -120,30 +114,23 @@ def build_app():
     app.add_handler(CommandHandler("referral", uh.referral_cmd))
     app.add_handler(CommandHandler("withdraw", uh.withdraw_cmd))
     app.add_handler(CommandHandler("subjects", uh.subjects_cmd))
+    
+    # Force Join Check Handler
+    app.add_handler(CallbackQueryHandler(uh.check_join_callback, pattern=r"^check_join$"))
 
-    # ==============================================================
-    # PDF CLEANER (USER FLOW)
-    # ==============================================================
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(uh.cleanpdf_start, pattern=r"^menu_cleanpdf$"), CommandHandler("cleanpdf", uh.cleanpdf_start)],
         states={
             uh.ASK_PDF: [MessageHandler(filters.ALL & ~filters.COMMAND, uh.cleanpdf_process)],
         },
         fallbacks=[CommandHandler("cancel", uh.cleanpdf_cancel)],
+        allow_reentry=True
     ))
-    # ==============================================================
 
     app.add_handler(CallbackQueryHandler(uh.menu_router, pattern=r"^menu_"))
-
-    # Ready Button (User System)
     app.add_handler(CallbackQueryHandler(quiz_engine.handle_ready_callback, pattern=r"^ready_"))
     app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
 
-    # ==============================================================
-    # NEW ADVANCED ADMIN CONVERSATIONS
-    # ==============================================================
-    
-    # 1. Advanced Admin Add
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(ah.admin_add_start, pattern=r"^admin_add_btn$")],
         states={
@@ -152,18 +139,18 @@ def build_app():
             ah.ASK_ADMIN_RIGHTS: [CallbackQueryHandler(ah.admin_add_rights, pattern=r"^arights_")]
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
-    # Admin Remove
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(ah.admin_rem_start, pattern=r"^admin_rem_btn$")],
         states={
             ah.ASK_ADMIN_ID_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_rem_process)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
-    # 2. Super Broadcast (Text, HTML, Image sab chalega)
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("broadcast", ah.broadcast_start), CallbackQueryHandler(ah.broadcast_start, pattern=r"^amenu_broadcast$")],
         states={
@@ -171,24 +158,28 @@ def build_app():
             ah.ASK_BROADCAST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, ah.broadcast_process)]
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
-    # 3. Send Quiz (Channel & Group)
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("sendquiz", ah.sendquiz_start), CallbackQueryHandler(ah.sendquiz_start, pattern=r"^amenu_remotequiz$")],
         states={
             ah.ASK_QUIZ_DEST_TYPE: [CallbackQueryHandler(ah.sendquiz_dest_type, pattern=r"^squiz_")],
-            ah.ASK_QUIZ_JSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.sendquiz_receive_json)],
+            ah.ASK_QUIZ_JSON: [
+                CommandHandler("done", ah.sendquiz_receive_json_done),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ah.sendquiz_receive_json_text)
+            ],
             ah.ASK_QUIZ_GROUP_CHAP: [CallbackQueryHandler(ah.sendquiz_group_chap, pattern=r"^sqsubj_")],
             ah.ASK_QUIZ_GROUP_TIMER: [CallbackQueryHandler(ah.sendquiz_group_timer, pattern=r"^sqchap_")],
             ah.ASK_QUIZ_GROUP_COUNT: [CallbackQueryHandler(ah.sendquiz_group_count, pattern=r"^sqtime_")],
             ah.ASK_QUIZ_GROUP_CONFIRM: [CallbackQueryHandler(ah.sendquiz_group_confirm, pattern=r"^sqlen_")]
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
-    # ==============================================================
 
-    # ---- Direct Button Mapping for Admin Panel ----
+    app.add_handler(CallbackQueryHandler(ah.pushnote_action, pattern=r"^pushnote_"))
+
     app.add_handler(CallbackQueryHandler(ah.uploadword_prompt, pattern=r"^amenu_uploadword$"))
     app.add_handler(CallbackQueryHandler(ah.samplefile_cmd, pattern=r"^amenu_sample$"))
     app.add_handler(CallbackQueryHandler(ah.exportquestions_cmd, pattern=r"^amenu_export$"))
@@ -206,6 +197,7 @@ def build_app():
             ah.ASK_DOCX_FILE: [MessageHandler(filters.Document.FileExtension("docx"), ah.addquestion_file)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
     app.add_handler(ConversationHandler(
@@ -215,6 +207,7 @@ def build_app():
             ah.ASK_AD_BUTTON: [MessageHandler(filters.TEXT, ah.postad_button)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
     app.add_handler(ConversationHandler(
@@ -224,6 +217,7 @@ def build_app():
             ah.ASK_NOTE_CONTENT: [MessageHandler(filters.TEXT, ah.sendnote_content)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
     app.add_handler(ConversationHandler(
@@ -235,6 +229,7 @@ def build_app():
             ah.ASK_DIR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.adddirectory_link)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
     app.add_handler(ConversationHandler(
@@ -245,6 +240,7 @@ def build_app():
             ah.ASK_BOOST_SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.boost_schedule)],
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+        allow_reentry=True
     ))
 
     app.add_handler(CallbackQueryHandler(admin_menu_router, pattern=r"^amenu_"))
@@ -286,15 +282,6 @@ def build_app():
     app.add_handler(CommandHandler("setgroupcoin", ah.setgroupcoin_cmd))
     app.add_handler(CommandHandler("setgroupnegative", ah.setgroupnegative_cmd))
     app.add_handler(CommandHandler("setgroupentryfee", ah.setgroupentryfee_cmd))
-    app.add_handler(CommandHandler("addgroup", ah.addgroup_cmd))
-    app.add_handler(CommandHandler("listgroups", ah.listgroups_cmd))
-    app.add_handler(CommandHandler("reactions", ah.reactions_cmd))
-    app.add_handler(CommandHandler("reactionson", ah.reactionson_cmd))
-    app.add_handler(CommandHandler("reactionsoff", ah.reactionsoff_cmd))
-    app.add_handler(CommandHandler("setreactionemojis", ah.setreactionemojis_cmd))
-    app.add_handler(CommandHandler("boostlist", ah.boostlist_cmd))
-    app.add_handler(CommandHandler("stopboost", ah.stopboost_cmd))
-    app.add_handler(CommandHandler("besttime", ah.besttime_cmd))
     app.add_handler(CommandHandler("removedirectory", ah.removedirectory_cmd))
     app.add_handler(CommandHandler("discover", uh.discover_cmd))
     app.add_handler(CallbackQueryHandler(uh.directory_category_selected, pattern=r"^dircat_"))
