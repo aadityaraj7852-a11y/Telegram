@@ -39,7 +39,7 @@ def main_menu_keyboard(user_id):
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="menu_leaderboard"),
          InlineKeyboardButton("📊 My Score", callback_data="menu_myscore")],
         [InlineKeyboardButton("🕓 History", callback_data="menu_history"),
-         InlineKeyboardButton("🪙 Wallet", callback_data="menu_wallet")],
+         InlineKeyboardButton("💰 Wallet", callback_data="menu_wallet")],
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
         
@@ -259,12 +259,13 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "menu_referral":
-        bot_username = (await context.bot.get_me()).username
+        bot_username = context.bot.username
         link = f"https://t.me/{bot_username}?start=ref_{query.from_user.id}"
+        # Telegram Markdown error se bachne ke liye idhar HTML parse_mode use kiya gaya hai
         await query.edit_message_text(
-            f"👥 *Referral Program*\n\nApne dost ko is link se invite karo, "
-            f"jab wo bot start karega tumhe 10 coins milenge!\n\n{link}",
-            parse_mode="Markdown", reply_markup=_back_kb()
+            f"👥 <b>Referral Program</b>\n\nApne dost ko is link se invite karo, "
+            f"jab wo bot start karega tumhe 10 coins milenge!\n\n<code>{link}</code>",
+            parse_mode="HTML", reply_markup=_back_kb()
         )
         return
 
@@ -757,12 +758,12 @@ async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🪙 Tumhare paas {coins} coins hain.\n\nWithdraw karne ke liye `/withdraw <amount>` likhein.", parse_mode="Markdown")
 
 async def referral_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bot_username = (await context.bot.get_me()).username
+    bot_username = context.bot.username
     link = f"https://t.me/{bot_username}?start=ref_{update.effective_user.id}"
     await update.message.reply_text(
-        f"👥 *Referral Program*\n\nApne dost ko is link se invite karo, "
-        f"jab wo bot start karega tumhe 10 coins milenge!\n\n{link}",
-        parse_mode="Markdown"
+        f"👥 <b>Referral Program</b>\n\nApne dost ko is link se invite karo, "
+        f"jab wo bot start karega tumhe 10 coins milenge!\n\n<code>{link}</code>",
+        parse_mode="HTML"
     )
 
 async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
