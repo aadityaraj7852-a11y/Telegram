@@ -9,6 +9,7 @@ import re
 import json
 import asyncio
 import random
+import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -18,7 +19,10 @@ import config
 from utils.permissions import require_admin, require_owner, is_admin, is_owner
 from utils.docx_parser import parse_docx, validate_parsed
 from utils.exporters import make_sample_template, export_questions_to_docx
+from utils.pdf_cleaner import clean_pdf
 from utils.html_notes import sanitize_for_telegram, chunk_message
+
+logger = logging.getLogger(__name__)
 
 # Conversation states
 ASK_SUBJECT, ASK_CHAPTER, ASK_DOCX_FILE = range(3)
@@ -276,15 +280,19 @@ async def sendquiz_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def sendquiz_receive_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
-    if text == "/done":
-        json_data = context.user_data.get("json_buffer", "")
+    if text.lower() == "/done":
+        json_data = context.user_data.get("json_buffer", "").strip()
         try:
+            # Auto-fixing broken JSON (missing brackets or concatenated arrays)
+            if not json_data.startswith('['): json_data = '[' + json_data
+            if not json_data.endswith(']'): json_data = json_data + ']'
             json_data = re.sub(r'\]\s*\[', ',', json_data)
+            
             parsed_json = json.loads(json_data)
             if not isinstance(parsed_json, list):
-                raise ValueError("JSON must be a list []")
+                raise ValueError("JSON array list [] format me hona chahiye.")
         except Exception as e:
-            await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein.")
+            await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein (Purana code clear kar diya gaya hai).")
             context.user_data["json_buffer"] = ""
             return ASK_QUIZ_JSON
             
@@ -303,25 +311,29 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
     sent = 0
     for item in parsed_json:
         try:
-            q = item.get("question", "").replace("<br>", "\n").replace("<br/>", "\n")
+            q = str(item.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
             opts_list = item.get("option", [])
-            opts = "\n".join(opts_list).replace("<br>", "\n")
-            ans = item.get("answer", "")
-            sol = item.get("solution", "").replace("<br>", "\n").replace("<br/>", "\n")
-            module = item.get("module", "GK")
+            opts = "\n".join([str(o) for o in opts_list]).replace("<br>", "\n")
+            ans = str(item.get("answer", ""))
+            sol = str(item.get("solution", "")).replace("<br>", "\n").replace("<br/>", "\n")
+            module = str(item.get("module", "GK"))
             
             q_text = f"🏷 <b>Topic:</b> {module}\n\n❓ <b>प्रश्न:</b>\n{q}\n\n<b>विकल्प:</b>\n{opts}"
             if len(q_text) > 4000: q_text = q_text[:4000] + "..."
             await context.bot.send_message(chat_id=channel_id, text=q_text, parse_mode="HTML")
             
-            sol_text = f"✅ <b>सही उत्तर:</b> {ans}\n\n<tg-spoiler><b>व्याख्या (Explanation):</b>\n{sol}</tg-spoiler>"
+            if sol:
+                sol_text = f"✅ <b>सही उत्तर:</b> {ans}\n\n<tg-spoiler><b>व्याख्या (Explanation):</b>\n{sol}</tg-spoiler>"
+            else:
+                sol_text = f"✅ <b>सही उत्तर:</b> {ans}"
+                
             if len(sol_text) > 4000: sol_text = sol_text[:4000] + "...</tg-spoiler>"
             await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
             
             sent += 1
             await asyncio.sleep(30)
         except Exception as e:
-            print(f"Error sending to channel: {e}")
+            logger.error(f"Error sending to channel: {e}")
             await asyncio.sleep(5)
             
     try:
@@ -721,12 +733,10 @@ async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     note_id = db.save_note(title, update.message.text, update.effective_user.id)
     clean_html = sanitize_for_telegram(update.message.text)
     
-    # Preview
     for chunk in chunk_message(f"<b>{title}</b>\n\n{clean_html}"):
         try: await update.effective_message.reply_text(chunk, parse_mode="HTML")
         except: await update.effective_message.reply_text(re.sub(r"<[^>]+>", "", chunk))
         
-    # Group Choose karne ka naya Button System!
     groups = db.get_active_groups()
     if not groups:
         await update.effective_message.reply_text("✅ Note ban gaya! (Lekin koi group/channel list me nahi hai.)")
@@ -739,7 +749,6 @@ async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fallback manual command (just in case)"""
     if not await check_admin(update): return
     if len(context.args) < 2 or not context.args[0].isdigit(): return
     note = db.get_note(int(context.args[0]))
@@ -755,7 +764,6 @@ async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(f"❌ Error: {e}")
 
 async def pushnote_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Naya Button-based Note Sender"""
     query = update.callback_query
     await query.answer()
     if not is_admin(query.from_user.id): return
@@ -790,7 +798,6 @@ async def notelist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for n in notes:
         lines.append(f"• #{n['note_id']} — {n['title']}")
         
-    # Buttons for sending specific notes
     kb = []
     for n in notes:
         kb.append([InlineKeyboardButton(f"Send: {n['title'][:20]}", callback_data=f"notesend_{n['note_id']}")])
@@ -798,7 +805,6 @@ async def notelist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def notesend_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Button dabaney par aage ke groups dikhayega"""
     query = update.callback_query
     await query.answer()
     if not is_admin(query.from_user.id): return
