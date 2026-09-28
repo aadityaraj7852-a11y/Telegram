@@ -1,12 +1,14 @@
 """
 quiz_engine.py
 Complete Advanced Quiz Engine
-Features: 5-Person Ready System, Admin Instant Start, PDF Leaderboards, Custom Timers, Fancy UI.
+Features: 5-Person Ready System, Admin Instant Start, PDF Leaderboards, Custom Timers, Fancy UI, Negative Marking.
 """
 
 import asyncio
 import os
 import random
+import re
+import json
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -45,7 +47,6 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         await context.bot.send_message(chat_id, "⚠️ यहाँ पहले से एक क्विज़ चल रहा है या शुरू होने वाला है!")
         return
 
-    # Database se sawaal uthana
     all_q = db.get_questions()
     filtered_q = []
     for q in all_q:
@@ -64,7 +65,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
     timer = custom_timer if custom_timer else getattr(config, 'QUESTION_TIME', 15)
     subj_name = "Mixed (सभी विषय)" if not subject_id else "Selected Topic"
 
-    # 🔥 NAYA FANCY UI (As per your design)
+    # 🔥 FANCY UI + Reward Display (+2, -1)
     text = (
         f"╔══════════════════════╗\n"
         f"🏆  *LIVE QUIZ — MockRise*  🏆\n"
@@ -76,7 +77,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         f"🔀 *Shuffle: ON*\n"
         f"🏅 *Result PDF + Rank*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"✅ *+10 Points*  ❌ *0*  ⚡ *जल्दी = बेहतर Rank*\n\n"
+        f"✅ *+2 Coins*  ❌ *-1 Coin*  ⚡ *जल्दी = बेहतर Rank*\n\n"
         f"👇 *Join करें!*"
     )
 
@@ -86,7 +87,6 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
 
     msg = await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
 
-    # Session memory me save karna
     ready_sessions[chat_id] = {
         "ready_users": set(),
         "msg_id": msg.message_id,
@@ -127,7 +127,6 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="Markdown"
         )
         
-        # Bina intezaar kiye turant start
         if chat_id in ready_sessions:
             q_data = ready_sessions.pop(chat_id)
             await run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"])
@@ -143,7 +142,6 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer("✅ आप क्विज़ के लिए तैयार हैं!")
 
     if count < 5:
-        # Agar 5 log nahi hue to button ka number badhao
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton(f"🚀 Join Quiz ({count}/5)", callback_data=f"ready_{chat_id}")
         ]])
@@ -152,7 +150,6 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             logger.error(f"Markup edit error: {e}")
     else:
-        # 5 log aa gaye! Ab quiz shuru karne ka samay
         session["status"] = "countdown"
         try:
             await query.edit_message_reply_markup(reply_markup=None)
@@ -165,7 +162,6 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="Markdown"
         )
         
-        # 1 minute (60 seconds) ka intezaar
         await asyncio.sleep(60)
         
         if chat_id in ready_sessions:
@@ -183,32 +179,69 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
         "total_q": len(questions)
     }
     
-    await asyncio.sleep(2) # Halka sa gap taaki log alert ho jayein
+    await asyncio.sleep(2)
 
     for idx, q in enumerate(questions):
         if chat_id not in active_quizzes or not active_quizzes[chat_id]["running"]: 
             break
         
         try:
+            # 🧹 RAW DATA SANITIZE (Poll Crash Se Bachne Ke Liye)
+            raw_q = str(q.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
+            clean_q = re.sub(r'<[^>]+>', '', raw_q).strip()
+            if len(clean_q) > 280:
+                clean_q = clean_q[:277] + "..."
+            question_text = f"Q{idx+1}/{len(questions)}: {clean_q}"
+
+            # Options parsing & validation
+            raw_opts = q.get("options", [])
+            if isinstance(raw_opts, str):
+                try:
+                    raw_opts = json.loads(raw_opts)
+                except Exception:
+                    raw_opts = [o.strip() for o in raw_opts.split("\n") if o.strip()]
+
+            clean_opts = []
+            for opt in raw_opts:
+                opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
+                if len(opt_str) > 100:
+                    opt_str = opt_str[:97] + "..."
+                if opt_str:
+                    clean_opts.append(opt_str)
+
+            while len(clean_opts) < 2:
+                clean_opts.append(f"Option {len(clean_opts)+1}")
+            clean_opts = clean_opts[:10]
+
+            correct_idx = q.get("correct_index", 0)
+            if not isinstance(correct_idx, int) or correct_idx < 0 or correct_idx >= len(clean_opts):
+                correct_idx = 0
+
+            raw_exp = str(q.get("explanation", "")).replace("<br>", "\n").replace("<br/>", "\n")
+            clean_exp = re.sub(r'<[^>]+>', '', raw_exp).strip()
+            if len(clean_exp) > 200:
+                clean_exp = clean_exp[:197] + "..."
+
+            # Telegram Poll Send
             poll_msg = await context.bot.send_poll(
-                chat_id, 
-                f"प्रश्न {idx+1}/{len(questions)}: {q['question']}", 
-                options=q["options"],
+                chat_id=chat_id, 
+                question=question_text, 
+                options=clean_opts,
                 type="quiz", 
-                correct_option_id=q["correct_index"], 
-                explanation=q.get("explanation", ""),
+                correct_option_id=correct_idx, 
+                explanation=clean_exp if clean_exp else None,
                 open_period=timer, 
                 is_anonymous=False
             )
             
             active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
-            active_quizzes[chat_id]["correct_idx"] = q["correct_index"]
+            active_quizzes[chat_id]["correct_idx"] = correct_idx
             
-            # Poll ke band hone tak ka intezaar (timer + 1 second)
             await asyncio.sleep(timer + 1)
             
         except Exception as e:
             logger.error(f"Error sending poll in {chat_id}: {e}")
+            # Agar Poll me error aati hai to crash hone ke bajaye agle question par safely jaye
             await asyncio.sleep(2)
 
     # Jab saare sawaal khatam ho jayein
@@ -218,7 +251,7 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
         await generate_and_send_pdf(context, chat_id, chat_title, scores)
 
 
-# Poll me user ka jawab check karna
+# Poll me user ka jawab check karna (NEGATIVE MARKING INCLUDED)
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
     poll_id = answer.poll_id
@@ -228,16 +261,24 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     for chat_id, quiz_data in active_quizzes.items():
         if quiz_data.get("poll_id") == poll_id:
+            if user_id not in quiz_data["scores"]: 
+                quiz_data["scores"][user_id] = {"name": name, "score": 0}
+            
             if selected == quiz_data["correct_idx"]:
-                if user_id not in quiz_data["scores"]: 
-                    quiz_data["scores"][user_id] = {"name": name, "score": 0}
-                # Sahi jawab par 10 points
-                quiz_data["scores"][user_id]["score"] += 10
-                
+                # Sahi Jawab: 2 Points + 2 Coins
+                quiz_data["scores"][user_id]["score"] += 2
                 try:
-                    db.add_coins(user_id, 10)
+                    db.add_coins(user_id, 2)
                 except Exception as e:
                     logger.error(f"Error adding coins: {e}")
+            else:
+                # Galat Jawab: -1 Point + 1 Coin cut (Negative Marking)
+                quiz_data["scores"][user_id]["score"] -= 1
+                try:
+                    db.deduct_coins(user_id, 1)
+                except Exception as e:
+                    logger.error(f"Error deducting coins: {e}")
+                    
             break
 
 # ==========================================
@@ -245,13 +286,11 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==========================================
 async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, scores_dict):
     if not scores_dict:
-        await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी सही जवाब नहीं दिया।")
+        await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी हिस्सा नहीं लिया।")
         return
 
-    # Zyada score wale users ko upar (Rank-wise) set karna
     sorted_users = sorted(scores_dict.values(), key=lambda x: x["score"], reverse=True)
     
-    # Top 5 baccho ka text message
     text = "🏆 *FINAL LEADERBOARD*\n__________________________\n"
     for i, u in enumerate(sorted_users[:5]):
         medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
@@ -260,14 +299,12 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
     
     await context.bot.send_message(chat_id, text, parse_mode="Markdown")
 
-    # Poori rank list ki PDF file banana
     try:
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", 'B', 16)
         pdf.cell(200, 10, txt="Official Quiz Result", ln=True, align='C')
         
-        # Emojis ya galat font ko saaf karna taaki PDF crash na ho
         safe_chat_title = chat_title[:30].encode('ascii', 'ignore').decode() if chat_title else "Group Quiz"
         pdf.cell(200, 10, txt=f"Group: {safe_chat_title}", ln=True, align='C')
         pdf.ln(10)
@@ -292,14 +329,14 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
         file_path = f"/tmp/result_{chat_id}.pdf"
         pdf.output(file_path)
         
-        # PDF ko group me bhejna
         await context.bot.send_document(
             chat_id, 
             document=open(file_path, "rb"),
             caption="📄 *विस्तृत लीडरबोर्ड (Detailed Result)* 👆\nडाउनलोड करके अपनी रैंक चेक करें!",
             parse_mode="Markdown"
         )
-        os.remove(file_path) 
+        if os.path.exists(file_path):
+            os.remove(file_path)
     except Exception as e:
         logger.error(f"PDF Error: {e}")
         await context.bot.send_message(chat_id, "⚠️ Leaderboard PDF generate karne me error aayi.")
