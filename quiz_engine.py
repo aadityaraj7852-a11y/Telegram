@@ -94,6 +94,15 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
                 if str(q.get('subject_id', '')) != str(subject_id):
                     continue
 
+        # Database column is `question_text`, while quiz engine uses `question`.
+        # Normalize both formats so imported questions never appear as"प्रश्न उपलब्ध नहीं है।"
+        if not q.get("question") and q.get("question_text") is not None:
+            q["question"] = q.get("question_text")
+
+        # Normalize sqlite Row / older database records.
+        if "explanation" not in q and q.get("solution") is not None:
+            q["explanation"] = q.get("solution")
+
         filtered_q.append(q)
 
     if not filtered_q:
