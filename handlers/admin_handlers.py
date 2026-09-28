@@ -31,14 +31,43 @@ ASK_GROUP_ID, ASK_GROUP_COINRATE, ASK_GROUP_NEGATIVE, ASK_GROUP_ENTRYFEE = range
 ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
 ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
 
-# New Advanced States
 ASK_ADMIN_ID_ADD, ASK_ADMIN_GROUP, ASK_ADMIN_RIGHTS = range(700, 703)
 ASK_ADMIN_ID_REMOVE = 704
 ASK_BROADCAST_TARGET, ASK_BROADCAST_MSG = range(710, 712)
 ASK_QUIZ_DEST_TYPE, ASK_QUIZ_JSON, ASK_QUIZ_GROUP_CHAP, ASK_QUIZ_GROUP_TIMER, ASK_QUIZ_GROUP_COUNT, ASK_QUIZ_GROUP_CONFIRM = range(800, 806)
 
 
-# --- Helper for Buttons & Commands ---
+# =========================================================================
+# 💬 ADMIN REPLY HANDLER (Owner Reply to Support Ticket)
+# =========================================================================
+async def owner_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Jab Admin support message par 'Reply' karta hai, to user ko wapas jayega"""
+    if not update.message.reply_to_message: return
+    if not is_admin(update.effective_user.id): return
+
+    reply_to_text = update.message.reply_to_message.text
+    if not reply_to_text or "📩 New Support Message" not in reply_to_text:
+        return
+
+    try:
+        lines = reply_to_text.split('\n')
+        user_id_line = [l for l in lines if l.startswith("🆔 ID:")][0]
+        user_id_str = user_id_line.replace("🆔 ID:", "").strip()
+        user_id = int(user_id_str)
+        
+        admin_reply = update.message.text
+        
+        await context.bot.send_message(
+            user_id, 
+            f"👨‍💻 *Admin Reply:*\n\n{admin_reply}", 
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("✅ Reply successfully sent to user!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Reply bhejne me error aayi: {e}")
+# =========================================================================
+
+
 async def check_admin(update: Update):
     if update.callback_query:
         if not is_admin(update.effective_user.id):
@@ -55,8 +84,6 @@ async def check_owner(update: Update):
         return True
     return await require_owner(update)
 
-
-# ---------------- 1. ADVANCED ADMIN MANAGEMENT ----------------
 async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -155,8 +182,6 @@ async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await manage_admins_menu(update, context)
 
-
-# ---------------- 2. SUPER BROADCAST (TARGETED & HTML + IMAGE SUPPORT) ----------------
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -187,6 +212,13 @@ async def broadcast_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✍️ *Ab apna Broadcast Message bhejein!*\n\n"
         "💡 *Tip:* Aap yahan simple text, HTML format, Emoji, ya Image ke sath Caption bhi bhej sakte hain. "
         "Aap jaisa message bhejenge (Bold, Italic, Link, Photo), bot exactly waisa hi copy karke bhej dega!\n\n"
+        "📌 *HTML Demo Code (Ise copy karke edit kar lein):*\n"
+        "```html\n"
+        "<b>🏆 Mega Quiz Alert!</b>\n\n"
+        "<blockquote>💡 Quote: Mehnat ka fal hamesha meetha hota hai.</blockquote>\n\n"
+        "<i>Aaj ka quiz live ho chuka hai. Jaldi join karein!</i>\n"
+        "<a href='[https://t.me/mockrise](https://t.me/mockrise)'>Mockrise Join Karein</a>\n"
+        "```\n\n"
         "(Cancel karne ke liye /cancel likhein)"
     )
     await query.edit_message_text(sample_text, parse_mode="Markdown")
@@ -228,8 +260,6 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-
-# ---------------- 3. SEND QUIZ (JSON FOR CHANNELS, ENGINE FOR GROUPS) ----------------
 async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -275,10 +305,8 @@ async def sendquiz_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("📚 **Subejct Choose Karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
         return ASK_QUIZ_GROUP_CHAP
 
-# --- JSON Logic for Channels ---
 async def sendquiz_receive_json_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    
     context.user_data["json_buffer"] = context.user_data.get("json_buffer", "") + text
     await update.message.reply_text("✅ Code added. Agar aur code bacha hai to paste karein, warna `/done` likhein.")
     return ASK_QUIZ_JSON
@@ -309,8 +337,6 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     context.user_data.clear()
     return ConversationHandler.END
 
-
-# 🔥 SMART PROCESSOR (Sends SINGLE POLL normally, uses Message->Poll->Spoiler ONLY for huge questions)
 async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
     sent = 0
     for item in parsed_json:
@@ -320,26 +346,19 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
             ans_str = str(item.get("answer", "")).strip().upper()
             sol = str(item.get("solution", "")).replace("<br>", "\n").replace("<br/>", "\n")
 
-            # Handling tags like <b> in question since Polls don't support HTML
             q_clean_for_poll = re.sub(r'<[^>]+>', '', q)
             sol_clean_for_poll = re.sub(r'<[^>]+>', '', sol)
 
-            # Convert answer to index
             ans_idx = 0
             if ans_str.startswith('A') or ans_str == '1': ans_idx = 0
             elif ans_str.startswith('B') or ans_str == '2': ans_idx = 1
             elif ans_str.startswith('C') or ans_str == '3': ans_idx = 2
             elif ans_str.startswith('D') or ans_str == '4': ans_idx = 3
 
-            # ========================================================
-            # Check Telegram's Native Poll Limits
-            # Telegram Limits: Question(300), Explanation(200), Options(100 each)
-            # ========================================================
             is_oversize = False
             if len(q_clean_for_poll) > 300: is_oversize = True
             if len(sol_clean_for_poll) > 200: is_oversize = True
             
-            # Agar option me HTML ho, toh poll me limit ke bahar ja sakta hai
             safe_opts_poll = []
             for opt in opts_list:
                 opt_clean = re.sub(r'<[^>]+>', '', opt)
@@ -349,11 +368,7 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
             if len(safe_opts_poll) < 2: safe_opts_poll.extend(["Option 2", "Option 3", "Option 4"])
             safe_opts_poll = safe_opts_poll[:10]
 
-
             if not is_oversize:
-                # ----------------------------------------------------
-                # CASE 1: EVERYTHING IS NORMAL (Send ONE Native Poll)
-                # ----------------------------------------------------
                 await context.bot.send_poll(
                     chat_id=channel_id,
                     question=q_clean_for_poll,
@@ -364,16 +379,11 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
                     is_anonymous=True
                 )
             else:
-                # ----------------------------------------------------
-                # CASE 2: QUESTION/SOLUTION IS HUGE (Message -> Poll -> Spoiler)
-                # ----------------------------------------------------
-                # 1. SEND QUESTION
                 q_text = f"❓ <b>प्रश्न:</b>\n{q}"
                 if len(q_text) > 4000: q_text = q_text[:4000] + "..."
                 await context.bot.send_message(chat_id=channel_id, text=q_text, parse_mode="HTML")
                 await asyncio.sleep(1)
 
-                # 2. SEND TRUNCATED POLL
                 truncated_opts = [o[:97] + "..." if len(o) > 100 else o for o in safe_opts_poll]
                 await context.bot.send_poll(
                     chat_id=channel_id,
@@ -385,7 +395,6 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
                 )
                 await asyncio.sleep(1)
 
-                # 3. SEND SPOILER SOLUTION
                 if sol:
                     sol_text = f"💡 <b>विस्तृत व्याख्या:</b>\n<tg-spoiler>{sol}</tg-spoiler>"
                 else:
@@ -395,7 +404,7 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
                 await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
             
             sent += 1
-            await asyncio.sleep(30) # Delay between questions
+            await asyncio.sleep(30) 
         except Exception as e:
             logger.error(f"Error sending to channel: {e}")
             await asyncio.sleep(5)
@@ -404,8 +413,6 @@ async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
         await context.bot.send_message(chat_id=admin_id, text=f"✅ Channel me {sent} questions successfully bhej diye gaye hain!")
     except: pass
 
-
-# --- Group Quiz Logic ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -472,7 +479,6 @@ async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 
-# ---------------- ADD QUESTION (SUBJECT -> CHAPTER -> WORD FILE) ----------------
 async def addquestion_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -543,8 +549,6 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text("❌ Cancel ho gaya. Menu ke liye /menu dabayein.")
     return ConversationHandler.END
 
-
-# ---------------- DIRECT WORD FILE UPLOAD (OPTIONAL / OLD COMMAND) ----------------
 async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -600,8 +604,6 @@ async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     db.delete_question(int(context.args[0]))
     await update.effective_message.reply_text("✅ Question delete ho gaya.")
 
-
-# ---------------- OTHER ADMIN FUNCTIONS ----------------
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -1001,23 +1003,33 @@ async def adddirectory_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def removedirectory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     
-    if not context.args or not context.args[0].isdigit():
-        categories = db.get_directory_categories()
-        if not categories:
-            await update.effective_message.reply_text("❌ Directory abhi khali hai.")
-            return
-            
-        text = "📋 *Directory Entries (Delete karne ke liye ID use karein):*\n\n"
-        for c in categories:
-            text += f"📁 *{c}*\n"
-            entries = db.get_directory_entries(c)
-            for e in entries:
-                text += f"  • ID: `{e['entry_id']}` — {e['title']}\n"
-        text += "\n🗑 *Delete Command:* `/removedirectory <ID>`\nExample: `/removedirectory 1`"
-        
-        await update.effective_message.reply_text(text, parse_mode="Markdown")
+    if context.args and context.args[0].isdigit():
+        entry_id = int(context.args[0])
+        db.deactivate_directory_entry(entry_id)
+        await update.effective_message.reply_text(f"✅ Directory entry #{entry_id} hata di gayi hai.")
         return
 
-    entry_id = int(context.args[0])
+    categories = db.get_directory_categories()
+    if not categories:
+        await update.effective_message.reply_text("❌ Directory abhi khali hai.")
+        return
+        
+    kb = []
+    text = "📋 *Directory Entries:*\n_Jise delete karna hai uske button par click karein!_\n\n"
+    for c in categories:
+        entries = db.get_directory_entries(c)
+        for e in entries:
+            text += f"📁 {c} ➞ {e['title']}\n"
+            kb.append([InlineKeyboardButton(f"🗑 Delete: {e['title'][:20]}", callback_data=f"deldir_{e['entry_id']}")])
+
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")])
+    await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def deldir_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+
+    entry_id = int(query.data.split("_")[1])
     db.deactivate_directory_entry(entry_id)
-    await update.effective_message.reply_text(f"✅ Directory entry #{entry_id} hata di gayi hai.")
+    await query.edit_message_text(f"✅ Directory entry #{entry_id} hata di gayi hai!")
