@@ -331,7 +331,16 @@ def main():
         
     app = build_app()
     logger.info("Bot start ho raha hai...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # 🔥 NETWORK FIX: Drop pending updates and add timeouts to prevent crashes
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30
+    )
 
 if __name__ == "__main__":
     main()
