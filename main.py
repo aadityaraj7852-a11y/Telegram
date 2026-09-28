@@ -1,12 +1,14 @@
 """
 main.py
 Bot ka entry point. 
-Start Command: python main.py
+Start Command me sirf: python main.py likhein.
 """
 
 import logging
 import os
+import threading
 import warnings
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.ext import (
@@ -28,6 +30,30 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+
+# =========================================================
+# 🌐 RENDER PORT BINDING FIX (To Prevent Conflict Errors)
+# =========================================================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running smoothly!")
+        
+    def log_message(self, format, *args):
+        pass 
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    try:
+        server = HTTPServer(("0.0.0.0", port), DummyHandler)
+        logger.info(f"🌐 Fake Web Server started on port {port} for Render.")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"❌ Web server start nahi hua: {e}")
+# =========================================================
 
 
 async def global_tracker(update: Update, context):
@@ -172,7 +198,7 @@ def build_app():
         allow_reentry=True
     ))
 
-    # ✏️ EDIT QUESTION FLOW (Added CommandHandler here)
+    # ✏️ EDIT QUESTION FLOW
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("editquestion", ah.editq_start), CallbackQueryHandler(ah.editq_start, pattern=r"^amenu_editq$")],
         states={
@@ -200,7 +226,6 @@ def build_app():
     ))
     app.add_handler(CallbackQueryHandler(ah.groupsettings_action, pattern=r"^gset_"))
     app.add_handler(CallbackQueryHandler(ah.groupsettings_coin_prompt, pattern=r"^gsetc_"))
-
 
     # 🚀 BOOST SYSTEM DM FLOW
     app.add_handler(ConversationHandler(
@@ -327,6 +352,9 @@ def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable set nahi hai! .env file check karo.")
         
+    # Start the dummy web server in the background so Render is happy
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     app = build_app()
     logger.info("Bot start ho raha hai...")
     
