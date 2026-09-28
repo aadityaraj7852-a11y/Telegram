@@ -150,6 +150,10 @@ async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.remove_admin(int(context.args[0]))
     await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin nahi hai.")
 
+# Ye function miss ho gaya tha, ise wapas add kar diya gaya hai!
+async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await manage_admins_menu(update, context)
+
 
 # ---------------- 2. SUPER BROADCAST (TARGETED & HTML + IMAGE SUPPORT) ----------------
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
