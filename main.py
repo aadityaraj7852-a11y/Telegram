@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================================
-# DUMMY SERVER (Render Free Tier par bot ko sleep hone se rokne ke liye)
+# DUMMY SERVER (Port Clash Fix)
 # =========================================================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -39,19 +39,23 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is alive and running!")
         
     def log_message(self, format, *args):
-        # Spammy logs ko band karne ke liye
         pass 
 
 def keep_alive_server():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        server.serve_forever()
+    except OSError:
+        # Agar Gunicorn pehle se port use kar raha hai to error nahi aayega
+        pass
 # =========================================================================
 
 
 async def track_group_membership(update: Update, context):
     chat = update.effective_chat
-    if chat.type in ("group", "supergroup"):
+    # 'channel' add kar diya gaya hai taaki channels bhi auto-save ho jayein
+    if chat.type in ("group", "supergroup", "channel"):
         db.upsert_group(chat.id, chat.title)
 
 async def run_due_boost_jobs(context):
@@ -111,23 +115,58 @@ def build_app():
 
     app.add_handler(CallbackQueryHandler(uh.menu_router, pattern=r"^menu_"))
 
-    # ---- Ready Button (5 User System) ----
+    # Ready Button (User System)
     app.add_handler(CallbackQueryHandler(quiz_engine.handle_ready_callback, pattern=r"^ready_"))
     app.add_handler(PollAnswerHandler(quiz_engine.handle_poll_answer))
 
-    # ---- Remote Quiz Launcher Flow (Admin) ----
-    rq_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ah.remote_quiz_start, pattern=r"^amenu_remotequiz$")],
+    # ==============================================================
+    # NEW ADVANCED ADMIN CONVERSATIONS
+    # ==============================================================
+    
+    # 1. Advanced Admin Add
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(ah.admin_add_start, pattern=r"^admin_add_btn$")],
         states={
-            ah.ASK_REMOTE_GROUP: [CallbackQueryHandler(ah.remote_quiz_group, pattern=r"^rqgrp_|rq_cancel$")],
-            ah.ASK_REMOTE_SUBJ: [CallbackQueryHandler(ah.remote_quiz_subj, pattern=r"^rqsubj_")],
-            ah.ASK_REMOTE_CHAP: [CallbackQueryHandler(ah.remote_quiz_chap, pattern=r"^rqchap_")],
-            ah.ASK_REMOTE_TIMER: [CallbackQueryHandler(ah.remote_quiz_timer, pattern=r"^rqtime_")],
-            ah.ASK_REMOTE_LEN: [CallbackQueryHandler(ah.remote_quiz_len, pattern=r"^rqlen_")],
+            ah.ASK_ADMIN_ID_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_add_id)],
+            ah.ASK_ADMIN_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_add_group)],
+            ah.ASK_ADMIN_RIGHTS: [CallbackQueryHandler(ah.admin_add_rights, pattern=r"^arights_")]
         },
         fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    )
-    app.add_handler(rq_conv)
+    ))
+
+    # Admin Remove
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(ah.admin_rem_start, pattern=r"^admin_rem_btn$")],
+        states={
+            ah.ASK_ADMIN_ID_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_rem_process)],
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
+
+    # 2. Super Broadcast (Text, HTML, Image sab chalega)
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("broadcast", ah.broadcast_start), CallbackQueryHandler(ah.broadcast_start, pattern=r"^amenu_broadcast$")],
+        states={
+            ah.ASK_BROADCAST_TARGET: [CallbackQueryHandler(ah.broadcast_target, pattern=r"^bcast_")],
+            ah.ASK_BROADCAST_MSG: [MessageHandler(filters.ALL & ~filters.COMMAND, ah.broadcast_process)]
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
+
+    # 3. Send Quiz (Channel & Group)
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("sendquiz", ah.sendquiz_start), CallbackQueryHandler(ah.sendquiz_start, pattern=r"^amenu_remotequiz$")],
+        states={
+            ah.ASK_QUIZ_DEST_TYPE: [CallbackQueryHandler(ah.sendquiz_dest_type, pattern=r"^squiz_")],
+            ah.ASK_QUIZ_JSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.sendquiz_receive_json)],
+            ah.ASK_QUIZ_GROUP_CHAP: [CallbackQueryHandler(ah.sendquiz_group_chap, pattern=r"^sqsubj_")],
+            ah.ASK_QUIZ_GROUP_TIMER: [CallbackQueryHandler(ah.sendquiz_group_timer, pattern=r"^sqchap_")],
+            ah.ASK_QUIZ_GROUP_COUNT: [CallbackQueryHandler(ah.sendquiz_group_count, pattern=r"^sqtime_")],
+            ah.ASK_QUIZ_GROUP_CONFIRM: [CallbackQueryHandler(ah.sendquiz_group_confirm, pattern=r"^sqlen_")]
+        },
+        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
+    ))
+    # ==============================================================
 
     # ---- Direct Button Mapping for Admin Panel ----
     app.add_handler(CallbackQueryHandler(ah.uploadword_prompt, pattern=r"^amenu_uploadword$"))
@@ -139,26 +178,6 @@ def build_app():
     app.add_handler(CallbackQueryHandler(ah.manage_admins_menu, pattern=r"^amenu_admins$"))
     app.add_handler(CallbackQueryHandler(ah.listgroups_cmd, pattern=r"^amenu_listgroups$"))
 
-    # ---- UI-Based Admin Conversations ----
-    app.add_handler(ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(ah.admin_add_start, pattern=r"^admin_add_btn$"),
-            CallbackQueryHandler(ah.admin_rem_start, pattern=r"^admin_rem_btn$")
-        ],
-        states={
-            ah.ASK_ADMIN_ID_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_add_process)],
-            ah.ASK_ADMIN_ID_REMOVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.admin_rem_process)],
-        },
-        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    ))
-
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("broadcast", ah.broadcast_start), CallbackQueryHandler(ah.broadcast_start, pattern=r"^amenu_broadcast$")],
-        states={ah.ASK_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, ah.broadcast_process)]},
-        fallbacks=[CommandHandler("cancel", ah.addquestion_cancel)],
-    ))
-
-    # Naya Word File Add Question Flow
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("addquestion", ah.addquestion_start), CallbackQueryHandler(ah.addquestion_start, pattern=r"^amenu_addq$")],
         states={
@@ -272,7 +291,6 @@ def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable set nahi hai! .env file check karo.")
         
-    # Ye line server ko start karke bot ko zinda rakhegi
     threading.Thread(target=keep_alive_server, daemon=True).start()
     
     app = build_app()
