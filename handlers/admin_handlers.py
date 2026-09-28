@@ -200,7 +200,7 @@ async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================================
-# ✏️ EDIT QUESTION SYSTEM (NEW)
+# ✏️ EDIT QUESTION SYSTEM
 # =========================================================================
 async def editq_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -222,7 +222,7 @@ async def editq_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_EDIT_Q_SEARCH
 
     kb = []
-    for q in matches[:10]: # Top 10 matches dikhayega
+    for q in matches[:10]:
         short_q = q['question'][:30].replace('\n', ' ') + "..."
         kb.append([InlineKeyboardButton(short_q, callback_data=f"eqsel_{q['question_id']}")])
     kb.append([InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")])
@@ -471,7 +471,7 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# --- Group Quiz Logic ---
+# --- Group Quiz Routing Fix (TIMER FREEZE FIXED) ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -484,6 +484,7 @@ async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE
         kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
               [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
         await query.edit_message_text("⏱ **Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        
         return ASK_QUIZ_GROUP_COUNT
     else:
         subj_id = int(data)
