@@ -3,10 +3,6 @@ user_handlers.py
 Normal users ke liye commands: start (menu UI), help, group quiz,
 solo practice, 1v1 duel challenge, leaderboard, myscore, history,
 referral, withdraw, subjects, notes dekhna.
-
-Menu UI: /start ya /menu par ek clean button-based menu aata hai
-(sab kuch button se, type kam karna padta hai). Har button ek
-category kholta hai.
 """
 
 import time
@@ -39,7 +35,7 @@ def main_menu_keyboard(user_id):
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="menu_leaderboard"),
          InlineKeyboardButton("📊 My Score", callback_data="menu_myscore")],
         [InlineKeyboardButton("🕓 History", callback_data="menu_history"),
-         InlineKeyboardButton("💰 Wallet", callback_data="menu_wallet")],
+         InlineKeyboardButton("🪙 Wallet", callback_data="menu_wallet")],
         [InlineKeyboardButton("👥 Referral", callback_data="menu_referral"),
          InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
         
@@ -92,6 +88,13 @@ def _back_kb():
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    
+    # 🚫 BAN CHECK SYSTEM
+    existing = db.get_user(user.id)
+    if existing and existing.get("is_banned"):
+        await update.message.reply_text("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।")
+        return
+
     referred_by = None
     
     # Referral check
@@ -103,7 +106,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             referred_by = None
 
-    existing = db.get_user(user.id)
     is_new_user = not bool(existing)
 
     db.upsert_user(user.id, user.username, user.first_name, referred_by=referred_by if is_new_user else None)
@@ -160,6 +162,12 @@ async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     user_id = query.from_user.id
     
+    # 🚫 BAN CHECK SYSTEM
+    u = db.get_user(user_id)
+    if u and u.get("is_banned"):
+        await query.answer("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।", show_alert=True)
+        return
+
     try:
         member = await context.bot.get_chat_member(chat_id="@mockrise", user_id=user_id)
         if member.status in ["left", "kicked", "banned"]:
@@ -180,14 +188,29 @@ async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    # 🚫 BAN CHECK SYSTEM
+    u = db.get_user(user.id)
+    if u and u.get("is_banned"):
+        await update.message.reply_text("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।")
+        return
+
     await update.message.reply_text(
         "📋 *Main Menu*\nNeeche se koi option chuno:",
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(update.effective_user.id)
+        reply_markup=main_menu_keyboard(user.id)
     )
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
+    
+    # 🚫 BAN CHECK SYSTEM
+    u = db.get_user(user_id)
+    if u and u.get("is_banned"):
+        await query.answer("❌ आपको बॉट इस्तेमाल करने से बैन कर दिया गया है।", show_alert=True)
+        return
+
     await query.answer()
     data = query.data
 
@@ -195,12 +218,12 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "📋 *Main Menu*\nNeeche se koi option chuno:",
             parse_mode="Markdown",
-            reply_markup=main_menu_keyboard(query.from_user.id)
+            reply_markup=main_menu_keyboard(user_id)
         )
         return
 
     if data == "menu_admin":
-        if not is_admin(query.from_user.id):
+        if not is_admin(user_id):
             await query.answer("⛔ Sirf admin ke liye.", show_alert=True)
             return
         await query.edit_message_text(
@@ -243,25 +266,24 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "menu_myscore":
-        text = _myscore_text(query.from_user.id)
+        text = _myscore_text(user_id)
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_back_kb())
         return
 
     if data == "menu_history":
-        text = _history_text(query.from_user.id)
+        text = _history_text(user_id)
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_back_kb())
         return
 
     if data == "menu_wallet":
-        u = db.get_user(query.from_user.id)
-        coins = u["coins"] if u else 0
+        u_data = db.get_user(user_id)
+        coins = u_data["coins"] if u_data else 0
         await query.edit_message_text(f"🪙 Tumhare paas {coins} coins hain.", reply_markup=_back_kb())
         return
 
     if data == "menu_referral":
         bot_username = context.bot.username
-        link = f"https://t.me/{bot_username}?start=ref_{query.from_user.id}"
-        # Telegram Markdown error se bachne ke liye idhar HTML parse_mode use kiya gaya hai
+        link = f"https://t.me/{bot_username}?start=ref_{user_id}"
         await query.edit_message_text(
             f"👥 <b>Referral Program</b>\n\nApne dost ko is link se invite karo, "
             f"jab wo bot start karega tumhe 10 coins milenge!\n\n<code>{link}</code>",
@@ -269,15 +291,58 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 💸 NEW WITHDRAWAL TIER SYSTEM (BUTTONS)
     if data == "menu_withdraw":
-        await query.edit_message_text(
-            "💸 Coins withdraw karne ke liye likho:\n`/withdraw <coins>`\n\nExample: `/withdraw 100`",
-            parse_mode="Markdown", reply_markup=_back_kb()
-        )
+        u_data = db.get_user(user_id)
+        coins = u_data["coins"] if u_data else 0
+        
+        kb = [
+            [InlineKeyboardButton("🪙 500 Coins = ₹10", callback_data="menu_reqwd_500")],
+            [InlineKeyboardButton("🪙 1000 Coins = ₹20", callback_data="menu_reqwd_1000")],
+            [InlineKeyboardButton("🪙 5000 Coins = ₹50", callback_data="menu_reqwd_5000")],
+            [InlineKeyboardButton("🪙 10000 Coins = ₹100", callback_data="menu_reqwd_10000")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="menu_back")]
+        ]
+        text = f"💸 *Withdraw Coins*\n\n💰 *Your Balance:* {coins} Coins\n\nNeeche diye gaye options me se chunein:"
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    if data == "menu_lounge":
-        await _send_lounge_link_query(query, context)
+    # 💸 WITHDRAWAL ACTION HANDLER
+    if data.startswith("menu_reqwd_"):
+        amount = int(data.split("_")[2])
+        rupee_map = {500: 10, 1000: 20, 5000: 50, 10000: 100}
+        rupees = rupee_map.get(amount, 0)
+        
+        u_data = db.get_user(user_id)
+        if not u_data or u_data["coins"] < amount:
+            await query.answer("❌ Aapke paas itne coins nahi hain!", show_alert=True)
+            return
+            
+        db.deduct_coins(user_id, amount)
+        wid = db.request_withdrawal(user_id, amount)
+        
+        text = (
+            f"✅ *Withdrawal Request Sent!*\n\n"
+            f"🆔 Request ID: #{wid}\n"
+            f"🪙 Deducted: {amount} Coins\n"
+            f"💵 Amount: ₹{rupees}\n\n"
+            f"Admin jaldi hi check karke process karenge."
+        )
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_back_kb())
+        
+        try:
+            await context.bot.send_message(
+                config.OWNER_ID,
+                f"💰 *New Withdrawal Request!*\n\n"
+                f"👤 User: {query.from_user.first_name} (@{query.from_user.username})\n"
+                f"🆔 ID: `{user_id}`\n"
+                f"🪙 Coins: {amount}\n"
+                f"💵 Payout: ₹{rupees}\n\n"
+                f"Dekhne ke liye `/withdrawals` likhein.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
         return
 
     if data == "menu_discover":
@@ -298,7 +363,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================================
-# CONTACT ADMIN / SUPPORT SYSTEM (NEW)
+# CONTACT ADMIN / SUPPORT SYSTEM
 # =========================================================================
 async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -461,25 +526,25 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/history — Purani quiz history\n"
         "/wallet — Coins balance\n"
         "/referral — Referral link\n"
-        "/withdraw <coins> — Coins withdraw request\n"
+        "/withdraw — Coins withdraw (UI menu)\n"
         "/subjects — Sab subjects dekho\n"
         "/discover — Group/channel directory browse karo\n\n"
-        "*PDF/Notes Tools (sabke liye):*\n"
+        "*PDF/Notes Tools:*\n"
         "Menu me jakar 'Clean PDF Links' button dabayein.\n\n"
-        "*Admin Commands (owner/admin):*\n"
+        "*Admin Commands:*\n"
         "/addquestion — Manually question add karo\n"
         "/uploadword — Word file se bulk questions add karo\n"
         "/samplefile — Sample format file paao\n"
         "/exportquestions — Poora question bank docx me export karo\n"
         "/deletequestion <id> — Question delete karo\n"
-        "/addadmin <user_id> — Naya admin banao (owner only)\n"
-        "/removeadmin <user_id> — Admin hatao (owner only)\n"
+        "/addadmin <user_id> — Naya admin banao\n"
+        "/removeadmin <user_id> — Admin hatao\n"
         "/broadcast <text> — Sab users ko message\n"
         "/postad — Group/channel me ad post karo\n"
         "/sendnote — HTML note banao aur bhejo\n"
         "/pushnote <id> <chat_id> — Saved note kisi group me bhejo\n"
         "/notelist — Saare saved notes\n"
-        "/reactions — Reactions Bot status (is group me)\n"
+        "/reactions — Reactions Bot status\n"
         "/reactionson / /reactionsoff — Auto-react chalu/band\n"
         "/setreactionemojis 🔥 👍 — Reaction emojis set karo\n"
         "/boost — Post ko pin + scheduled repost se boost karo\n"
@@ -488,9 +553,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/adddirectory — Apna group/channel directory me add karo\n"
         "/removedirectory <id> — Directory entry hatao\n"
         "/groupsettings — Is group ke settings dekho\n"
-        "/setgroupcoin <amt> — Is group ka coin rate\n"
-        "/setgroupnegative on <amt> / off — Negative marking\n"
-        "/setgroupentryfee <amt> — Entry fee set karo\n"
         "/addgroup <chat_id> [title] — Door se group register karo\n"
         "/listgroups — Sab registered groups\n"
         "/backup — Database backup file paao\n"
@@ -755,7 +817,7 @@ async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     u = db.get_user(user.id)
     coins = u["coins"] if u else 0
-    await update.message.reply_text(f"🪙 Tumhare paas {coins} coins hain.\n\nWithdraw karne ke liye `/withdraw <amount>` likhein.", parse_mode="Markdown")
+    await update.message.reply_text(f"🪙 Tumhare paas {coins} coins hain.\n\nWithdraw karne ke liye `/withdraw` likhein ya menu se select karein.", parse_mode="Markdown")
 
 async def referral_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = context.bot.username
@@ -766,32 +828,21 @@ async def referral_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
+# 💸 COMMAND BASED WITHDRAWAL SHOWS MENU NOW
 async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: `/withdraw <coins>`\nExample: `/withdraw 100`", parse_mode="Markdown")
-        return
+    u_data = db.get_user(user.id)
+    coins = u_data["coins"] if u_data else 0
+    
+    kb = [
+        [InlineKeyboardButton("🪙 500 Coins = ₹10", callback_data="menu_reqwd_500")],
+        [InlineKeyboardButton("🪙 1000 Coins = ₹20", callback_data="menu_reqwd_1000")],
+        [InlineKeyboardButton("🪙 5000 Coins = ₹50", callback_data="menu_reqwd_5000")],
+        [InlineKeyboardButton("🪙 10000 Coins = ₹100", callback_data="menu_reqwd_10000")],
+    ]
+    text = f"💸 *Withdraw Coins*\n\n💰 *Your Balance:* {coins} Coins\n\nNeeche diye gaye options me se chunein:"
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
-    amount = int(context.args[0])
-    u = db.get_user(user.id)
-    if not u or u["coins"] < amount:
-        await update.message.reply_text("❌ Itne coins tumhare paas nahi hain.")
-        return
-
-    db.deduct_coins(user.id, amount)
-    wid = db.request_withdrawal(user.id, amount)
-    await update.message.reply_text(
-        f"✅ Withdrawal request bhej di gayi (ID #{wid})। Admin approve karega to process ho jayega."
-    )
-
-    try:
-        await context.bot.send_message(
-            config.OWNER_ID,
-            f"💰 Nayi withdrawal request!\nUser: {user.first_name} (@{user.username})\n"
-            f"ID: {user.id}\nCoins: {amount}\nDekhne ke liye /withdrawals likho."
-        )
-    except Exception:
-        pass
 
 async def subjects_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_subjects(update.message)
