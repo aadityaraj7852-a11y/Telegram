@@ -59,10 +59,18 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
 
     filtered_q = []
     for row in all_q_rows:
-        try:
-            q = dict(row) if not isinstance(row, dict) else row
-        except Exception:
-            continue
+        # 🛠 HYPER-SAFE DICT CONVERTER (Fix for Python 3.12 sqlite3.Row)
+        q = {}
+        if isinstance(row, dict):
+            q = row
+        else:
+            try:
+                q = {k: row[k] for k in row.keys()}
+            except Exception:
+                try:
+                    q = dict(row)
+                except Exception:
+                    continue # Skip if totally unreadable
             
         q_subj = str(q.get('subject_id', ''))
         q_chap = str(q.get('chapter_id', ''))
@@ -75,9 +83,9 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
 
     if not filtered_q:
         try:
-            await context.bot.send_message(chat_id, "❌ इस टॉपिक के लिए पर्याप्त सवाल नहीं हैं।")
+            await context.bot.send_message(chat_id, "❌ इस टॉपिक के लिए पर्याप्त सवाल नहीं हैं। (कही Database खाली तो नहीं है?)")
         except Exception:
-            await context.bot.send_message(user_id, "❌ इस टॉपिक के लिए Database में कोई सवाल नहीं मिला!")
+            await context.bot.send_message(user_id, "❌ इस टॉपिक के लिए Database में कोई सवाल नहीं मिला! कृपया Word File दोबारा अपलोड करें।")
         return
 
     random.shuffle(filtered_q)
@@ -120,7 +128,6 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         "status": "waiting",
         "admin_id": user_id
     }
-
 
 async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -319,8 +326,6 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
         del active_quizzes[chat_id]
         await generate_and_send_pdf(context, chat_id, chat_title, scores)
 
-
-# Poll me user ka jawab check karna (NEGATIVE MARKING INCLUDED)
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
     poll_id = answer.poll_id
@@ -332,70 +337,48 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if quiz_data.get("poll_id") == poll_id:
             if user_id not in quiz_data["scores"]: 
                 quiz_data["scores"][user_id] = {"name": name, "score": 0}
-            
             if selected == quiz_data["correct_idx"]:
-                # Sahi Jawab: 2 Points + 2 Coins
                 quiz_data["scores"][user_id]["score"] += 2
-                try:
-                    db.add_coins(user_id, 2)
-                except Exception as e:
-                    logger.error(f"Error adding coins: {e}")
+                try: db.add_coins(user_id, 2)
+                except Exception: pass
             else:
-                # Galat Jawab: -1 Point + 1 Coin cut (Negative Marking)
                 quiz_data["scores"][user_id]["score"] -= 1
-                try:
-                    db.deduct_coins(user_id, 1)
-                except Exception as e:
-                    logger.error(f"Error deducting coins: {e}")
-                    
+                try: db.deduct_coins(user_id, 1)
+                except Exception: pass
             break
 
-# ==========================================
-# 3. PDF LEADERBOARD GENERATION
-# ==========================================
 async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, scores_dict):
     if not scores_dict:
-        try:
-            await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी हिस्सा नहीं लिया।")
-        except Exception:
-            pass
+        try: await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी हिस्सा नहीं लिया।")
+        except Exception: pass
         return
 
     sorted_users = sorted(scores_dict.values(), key=lambda x: x["score"], reverse=True)
-    
     text = "🏆 *FINAL LEADERBOARD*\n__________________________\n"
     for i, u in enumerate(sorted_users[:5]):
         medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
         medal = medals[i] if i < 5 else '🔹'
         text += f"{medal} {u['name']} - {u['score']} Points\n"
-    
-    try:
-        await context.bot.send_message(chat_id, text, parse_mode="Markdown")
-    except Exception:
-        pass
+    try: await context.bot.send_message(chat_id, text, parse_mode="Markdown")
+    except Exception: pass
 
     try:
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", 'B', 16)
         pdf.cell(200, 10, txt="Official Quiz Result", ln=True, align='C')
-        
         safe_chat_title = chat_title[:30].encode('ascii', 'ignore').decode() if chat_title else "Group Quiz"
         pdf.cell(200, 10, txt=f"Group: {safe_chat_title}", ln=True, align='C')
         pdf.ln(10)
-        
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(30, 10, "Rank", border=1, align='C')
         pdf.cell(100, 10, "Student Name", border=1)
         pdf.cell(40, 10, "Score", border=1, align='C')
         pdf.ln()
-        
         pdf.set_font("Arial", '', 12)
         for idx, user in enumerate(sorted_users):
             safe_name = user['name'].encode('ascii', 'ignore').decode().strip()
-            if not safe_name: 
-                safe_name = "Student"
-                
+            if not safe_name: safe_name = "Student"
             pdf.cell(30, 10, str(idx + 1), border=1, align='C')
             pdf.cell(100, 10, safe_name[:25], border=1)
             pdf.cell(40, 10, str(user['score']), border=1, align='C')
@@ -403,22 +386,11 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
             
         file_path = f"/tmp/result_{chat_id}.pdf"
         pdf.output(file_path)
-        
-        await context.bot.send_document(
-            chat_id, 
-            document=open(file_path, "rb"),
-            caption="📄 *विस्तृत लीडरबोर्ड (Detailed Result)* 👆\nडाउनलोड करके अपनी रैंक चेक करें!",
-            parse_mode="Markdown"
-        )
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        await context.bot.send_document(chat_id, document=open(file_path, "rb"), caption="📄 *विस्तृत लीडरबोर्ड (Detailed Result)* 👆\nडाउनलोड करके अपनी रैंक चेक करें!", parse_mode="Markdown")
+        if os.path.exists(file_path): os.remove(file_path)
     except Exception as e:
-        logger.error(f"PDF Error: {e}")
-        try:
-            await context.bot.send_message(chat_id, "⚠️ Leaderboard PDF generate karne me error aayi.")
-        except Exception:
-            pass
-
+        try: await context.bot.send_message(chat_id, "⚠️ Leaderboard PDF generate karne me error aayi.")
+        except Exception: pass
 
 async def start_duel(*args, **kwargs):
     pass
