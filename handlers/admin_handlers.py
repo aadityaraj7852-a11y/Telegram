@@ -19,7 +19,6 @@ import config
 from utils.permissions import require_admin, require_owner, is_admin, is_owner
 from utils.docx_parser import parse_docx, validate_parsed
 from utils.exporters import make_sample_template, export_questions_to_docx
-from utils.pdf_cleaner import clean_pdf
 from utils.html_notes import sanitize_for_telegram, chunk_message
 
 logger = logging.getLogger(__name__)
@@ -291,7 +290,6 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
         return ASK_QUIZ_JSON
 
     try:
-        # Fixing Broken Arrays if user pastes multiple JSON chunks:
         if not json_data.startswith('['): json_data = '[' + json_data
         if not json_data.endswith(']'): json_data = json_data + ']'
         json_data = re.sub(r'\]\s*\[', ',', json_data)
@@ -721,6 +719,108 @@ async def addgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.register_group_settings(chat_id, update.effective_user.id)
     await update.effective_message.reply_text("✅ Group add ho gaya.")
 
+async def sendnote_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    await update.effective_message.reply_text("📝 Note ka title likho:\n(Cancel ke liye /cancel)")
+    return ASK_NOTE_TITLE
+
+async def sendnote_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["note_title"] = update.message.text.strip()
+    await update.effective_message.reply_text("✍️ Ab HTML note ka content likho:")
+    return ASK_NOTE_CONTENT
+
+async def sendnote_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    title = context.user_data.get("note_title", "Note")
+    note_id = db.save_note(title, update.message.text, update.effective_user.id)
+    clean_html = sanitize_for_telegram(update.message.text)
+    
+    for chunk in chunk_message(f"<b>{title}</b>\n\n{clean_html}"):
+        try: await update.effective_message.reply_text(chunk, parse_mode="HTML")
+        except: await update.effective_message.reply_text(re.sub(r"<[^>]+>", "", chunk))
+        
+    groups = db.get_active_groups()
+    if not groups:
+        await update.effective_message.reply_text("✅ Note ban gaya! (Lekin koi group/channel list me nahi hai.)")
+    else:
+        kb = [[InlineKeyboardButton(g['title'], callback_data=f"pushnote_{note_id}_{g['chat_id']}")] for g in groups]
+        kb.append([InlineKeyboardButton("❌ Cancel", callback_data="pushnote_cancel")])
+        await update.effective_message.reply_text("✅ Note ban gaya! **Kahan bhejna hai? Niche button dabayein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def pushnote_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if len(context.args) < 2 or not context.args[0].isdigit(): return
+    note = db.get_note(int(context.args[0]))
+    if not note: return
+    try: chat_id = int(context.args[1])
+    except ValueError: return
+    clean_html = sanitize_for_telegram(note["content_html"])
+    try:
+        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
+            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
+        await update.effective_message.reply_text("✅ Note bhej diya gaya.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Error: {e}")
+
+async def pushnote_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    data = query.data
+    if data == "pushnote_cancel":
+        await query.edit_message_text("❌ Cancelled.")
+        return
+        
+    _, note_id, chat_id = data.split("_", 2)
+    note = db.get_note(int(note_id))
+    if not note: 
+        await query.edit_message_text("❌ Note nahi mila.")
+        return
+        
+    clean_html = sanitize_for_telegram(note["content_html"])
+    try:
+        for chunk in chunk_message(f"<b>{note['title']}</b>\n\n{clean_html}"):
+            await context.bot.send_message(chat_id, chunk, parse_mode="HTML")
+        await query.edit_message_text("✅ Note successfully bhej diya gaya!")
+    except Exception as e:
+        await query.edit_message_text(f"❌ Error sending note: {e}")
+
+async def notelist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    notes = db.get_notes()
+    if not notes:
+        await update.effective_message.reply_text("Koi note nahi hai.")
+        return
+        
+    lines = ["📚 *Saved Notes:*\n"]
+    for n in notes:
+        lines.append(f"• #{n['note_id']} — {n['title']}")
+        
+    kb = []
+    for n in notes:
+        kb.append([InlineKeyboardButton(f"Send: {n['title'][:20]}", callback_data=f"notesend_{n['note_id']}")])
+        
+    await update.effective_message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def notesend_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    note_id = query.data.split('_')[1]
+    groups = db.get_active_groups()
+    if not groups:
+         await query.message.reply_text("❌ Koi group/channel list me nahi hai.")
+         return
+         
+    kb = [[InlineKeyboardButton(g['title'], callback_data=f"pushnote_{note_id}_{g['chat_id']}")] for g in groups]
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="pushnote_cancel")])
+    await query.message.reply_text("🎯 **Is note ko kahan bhejna hai? Target Choose Karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
 async def reactions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     chat = update.effective_chat
@@ -836,8 +936,27 @@ async def adddirectory_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
+# 🗑 DIRECTORY ENTRY DELETE LOGIC UPDATED
 async def removedirectory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit(): return
-    db.deactivate_directory_entry(int(context.args[0]))
-    await update.effective_message.reply_text("✅ Directory entry hata di gayi.")
+    
+    if not context.args or not context.args[0].isdigit():
+        categories = db.get_directory_categories()
+        if not categories:
+            await update.effective_message.reply_text("❌ Directory abhi khali hai.")
+            return
+            
+        text = "📋 *Directory Entries (Delete karne ke liye ID use karein):*\n\n"
+        for c in categories:
+            text += f"📁 *{c}*\n"
+            entries = db.get_directory_entries(c)
+            for e in entries:
+                text += f"  • ID: `{e['entry_id']}` — {e['title']}\n"
+        text += "\n🗑 *Delete Command:* `/removedirectory <ID>`\nExample: `/removedirectory 1`"
+        
+        await update.effective_message.reply_text(text, parse_mode="Markdown")
+        return
+
+    entry_id = int(context.args[0])
+    db.deactivate_directory_entry(entry_id)
+    await update.effective_message.reply_text(f"✅ Directory entry #{entry_id} hata di gayi hai.")
