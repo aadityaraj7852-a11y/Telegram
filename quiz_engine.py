@@ -9,6 +9,7 @@ import os
 import random
 import re
 import json
+import ast
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -65,7 +66,7 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
     timer = custom_timer if custom_timer else getattr(config, 'QUESTION_TIME', 15)
     subj_name = "Mixed (सभी विषय)" if not subject_id else "Selected Topic"
 
-    # 🔥 FANCY UI + Reward Display (+2, -1) (Lines shortened for mobile screens)
+    # 🔥 FANCY UI + Reward Display (+2, -1)
     text = (
         f"╔══════════════════╗\n"
         f"🏆 *LIVE QUIZ — MockRise* 🏆\n"
@@ -97,7 +98,6 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
     }
 
 
-# Button click hone par chalne wala function (Admin Override Added)
 async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = update.effective_chat.id
@@ -129,7 +129,8 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
         
         if chat_id in ready_sessions:
             q_data = ready_sessions.pop(chat_id)
-            await run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"])
+            # MUST USE asyncio.create_task TO PREVENT BOT FREEZING
+            asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"]))
         return
 
     # 👥 NORMAL USER LOGIC
@@ -166,7 +167,7 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
         
         if chat_id in ready_sessions:
             q_data = ready_sessions.pop(chat_id)
-            await run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"])
+            asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"]))
 
 # ==========================================
 # 2. RUN QUIZ & POLL SCORING
@@ -186,41 +187,48 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
             break
         
         try:
-            # 🧹 RAW DATA SANITIZE (Poll Crash Se Bachne Ke Liye)
+            # 🧹 QUESTION SANITIZE
             raw_q = str(q.get("question", "")).replace("<br>", "\n").replace("<br/>", "\n")
             clean_q = re.sub(r'<[^>]+>', '', raw_q).strip()
             if len(clean_q) > 280:
                 clean_q = clean_q[:277] + "..."
             question_text = f"Q{idx+1}/{len(questions)}: {clean_q}"
 
-            # Options parsing & validation
+            # 🛠 OPTIONS SAFE PARSING (FIXED CRASH HERE)
             raw_opts = q.get("options", [])
             if isinstance(raw_opts, str):
                 try:
                     raw_opts = json.loads(raw_opts)
                 except Exception:
-                    raw_opts = [o.strip() for o in raw_opts.split("\n") if o.strip()]
+                    try:
+                        raw_opts = ast.literal_eval(raw_opts)
+                    except Exception:
+                        raw_opts = [o.strip() for o in raw_opts.split("\n") if o.strip()]
 
             clean_opts = []
-            for opt in raw_opts:
-                opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
-                if len(opt_str) > 100:
-                    opt_str = opt_str[:97] + "..."
-                if opt_str:
-                    clean_opts.append(opt_str)
+            if isinstance(raw_opts, list):
+                for opt in raw_opts:
+                    opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
+                    if len(opt_str) > 100:
+                        opt_str = opt_str[:97] + "..."
+                    if opt_str:
+                        clean_opts.append(opt_str)
 
             while len(clean_opts) < 2:
                 clean_opts.append(f"Option {len(clean_opts)+1}")
             clean_opts = clean_opts[:10]
 
+            # 🛠 CORRECT INDEX SAFE BOUNDING
             correct_idx = q.get("correct_index", 0)
-            if not isinstance(correct_idx, int) or correct_idx < 0 or correct_idx >= len(clean_opts):
+            try:
+                correct_idx = int(correct_idx)
+            except:
                 correct_idx = 0
+            correct_idx = max(0, min(correct_idx, len(clean_opts) - 1))
 
+            # 🧹 EXPLANATION SANITIZE
             raw_exp = str(q.get("explanation", "")).replace("<br>", "\n").replace("<br/>", "\n")
             clean_exp = re.sub(r'<[^>]+>', '', raw_exp).strip()
-            if len(clean_exp) > 200:
-                clean_exp = clean_exp[:197] + "..."
 
             # Telegram Poll Send
             poll_msg = await context.bot.send_poll(
@@ -229,7 +237,7 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
                 options=clean_opts,
                 type="quiz", 
                 correct_option_id=correct_idx, 
-                explanation=clean_exp if clean_exp else None,
+                explanation=clean_exp[:197] + "..." if len(clean_exp) > 200 else (clean_exp if clean_exp else None),
                 open_period=timer, 
                 is_anonymous=False
             )
@@ -237,10 +245,19 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
             active_quizzes[chat_id]["poll_id"] = poll_msg.poll.id
             active_quizzes[chat_id]["correct_idx"] = correct_idx
             
+            # ⏱ Wait for the timer to finish
             await asyncio.sleep(timer + 1)
+            
+            # 💡 EXPLANATION AFTER TIMER ENDS
+            if clean_exp:
+                exp_text = f"💡 *Q{idx+1} व्याख्या (Explanation):*\n_{clean_exp}_"
+                if len(exp_text) > 4000: exp_text = exp_text[:4000]
+                await context.bot.send_message(chat_id, exp_text, parse_mode="Markdown")
+                await asyncio.sleep(1.5) # Chhota sa gap naye sawal se pehle
             
         except Exception as e:
             logger.error(f"Error sending poll in {chat_id}: {e}")
+            await context.bot.send_message(chat_id, f"⚠️ *Error in Question {idx+1}:* Poll create nahi ho paya.", parse_mode="Markdown")
             await asyncio.sleep(2)
 
     # Jab saare sawaal khatam ho jayein
