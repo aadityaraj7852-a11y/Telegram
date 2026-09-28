@@ -118,6 +118,7 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
                          InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
     
+    # ✏️ NEW BUTTON: EDIT QUESTION IN ADMIN MENU
     keyboard.append([InlineKeyboardButton("✏️ Edit Question", callback_data="amenu_editq")])
     keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
     
@@ -391,7 +392,7 @@ async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ---------------- 3. POST AD (RESTORED) ----------------
+# ---------------- POST AD (RESTORED) ----------------
 async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
@@ -426,14 +427,14 @@ async def postad_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ---------------- 4. SEND QUIZ TO GROUP/CHANNEL ----------------
+# ---------------- 3. SEND QUIZ TO GROUP/CHANNEL ----------------
 async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return ConversationHandler.END
     
     groups = db.get_active_groups()
     if not groups:
-         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai. Pehle bot ko kisi group me add karein.")
+         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai.")
          return ConversationHandler.END
 
     kb = [[InlineKeyboardButton(f"📢 Channel: {g['title']}", callback_data=f"squiz_channel_{g['chat_id']}")] for g in groups]
@@ -505,7 +506,7 @@ async def sendquiz_receive_json_done(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# --- Group Quiz Logic ---
+# --- Group Quiz Routing ---
 async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -518,6 +519,7 @@ async def sendquiz_group_chap(update: Update, context: ContextTypes.DEFAULT_TYPE
         kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
               [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
         await query.edit_message_text("⏱ **Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        
         return ASK_QUIZ_GROUP_COUNT
     else:
         subj_id = int(data)
@@ -571,6 +573,7 @@ async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(f"✅ Awesome! Quiz {num} questions aur {timer}s timer ke sath group '{chat_title}' me launch ho raha hai...")
     
+    import quiz_engine
     await quiz_engine.start_quiz_session(context, chat_id, chat_title, subj, chap, update.effective_user.id, num, timer)
     
     context.user_data.clear()
@@ -648,7 +651,7 @@ async def addquestion_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ---------------- ⚙️ GROUP SETTINGS IN DM ----------------
+# ---------------- ⚙️ GROUP SETTINGS IN DM (FIXED) ----------------
 async def groupsettings_start_dm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -729,7 +732,28 @@ async def groupsettings_coin_receive(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# ---------------- OTHER ADMIN FUNCTIONS ----------------
+# ---------------- RESTORED OLD ADMIN COMMANDS TO PREVENT CRASHES ----------------
+async def groupsettings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text("💡 Group settings ab bot ke Private DM se aasaani se badli ja sakti hain. Bot me jake 'Group Settings' dabayein.")
+
+async def setgroupcoin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
+    db.update_group_setting_field(update.effective_chat.id, "coin_per_correct", int(context.args[0]))
+    await update.effective_message.reply_text(f"✅ Is group ka coin rate ab {context.args[0]} hai.")
+
+async def setgroupnegative_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or context.args[0].lower() not in ("on", "off"): return
+    db.update_group_setting_field(update.effective_chat.id, "negative_marking", int(context.args[0].lower() == "on"))
+    await update.effective_message.reply_text("✅ Negative marking updated.")
+
+async def setgroupentryfee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    if not context.args or not context.args[0].isdigit(): return
+    db.update_group_setting_field(update.effective_chat.id, "entry_fee", int(context.args[0]))
+    await update.effective_message.reply_text("✅ Entry fee updated.")
+
 async def uploadword_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
@@ -776,14 +800,6 @@ async def exportquestions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     path = export_questions_to_docx(questions)
     await update.effective_message.reply_document(document=open(path, "rb"), caption=f"📦 Total {len(questions)} questions export kiye.")
-
-async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    if not context.args or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /deletequestion <id>")
-        return
-    db.delete_question(int(context.args[0]))
-    await update.effective_message.reply_text("✅ Question delete ho gaya.")
 
 async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
