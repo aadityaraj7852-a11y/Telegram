@@ -35,8 +35,6 @@ ASK_NOTE_TITLE, ASK_NOTE_CONTENT = range(200, 202)
 ASK_BOOST_GROUP = 404
 ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
 
-ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
-
 ASK_ADMIN_ID_ADD, ASK_ADMIN_GROUP, ASK_ADMIN_RIGHTS = range(700, 703)
 ASK_ADMIN_ID_REMOVE = 704
 ASK_BROADCAST_TARGET, ASK_BROADCAST_MSG = range(710, 712)
@@ -48,6 +46,10 @@ ASK_EDIT_Q_VALUE = 901
 
 # GROUP SETTINGS DM STATE
 ASK_GSET_COINS = 950
+
+# BAN STATES
+ASK_BAN_ID = 960
+ASK_UNBAN_ID = 961
 
 
 # --- DB Helper for Editing Questions safely ---
@@ -118,7 +120,6 @@ async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
                          InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
     
-    # ✏️ NEW BUTTON: EDIT QUESTION IN ADMIN MENU
     keyboard.append([InlineKeyboardButton("✏️ Edit Question", callback_data="amenu_editq")])
     keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
     
@@ -197,6 +198,52 @@ async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await manage_admins_menu(update, context)
+
+
+# =========================================================================
+# 🚫 BAN / UNBAN INTERACTIVE UI FUNCTIONS
+# =========================================================================
+async def ban_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id): return
+    
+    kb = [
+        [InlineKeyboardButton("🚫 Ban User", callback_data="banui_ban")],
+        [InlineKeyboardButton("✅ Unban User", callback_data="banui_unban")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")]
+    ]
+    await query.edit_message_text("🚫 **Manage User Bans**\n\nKya karna chahte hain?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def banui_start_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🚫 **Ban User**\n\nJise block karna hai, uski Telegram ID bhejein:\n(Cancel ke liye /cancel)", parse_mode="Markdown")
+    return ASK_BAN_ID
+
+async def banui_receive_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo:")
+        return ASK_BAN_ID
+    db.set_ban(int(text), True)
+    await update.message.reply_text(f"✅ User `{text}` ko safaltapurvak ban kar diya gaya hai.\nMenu ke liye /menu dabayein.", parse_mode="Markdown")
+    return ConversationHandler.END
+
+async def banui_start_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("✅ **Unban User**\n\nJise unblock karna hai, uski Telegram ID bhejein:\n(Cancel ke liye /cancel)", parse_mode="Markdown")
+    return ASK_UNBAN_ID
+
+async def banui_receive_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo:")
+        return ASK_UNBAN_ID
+    db.set_ban(int(text), False)
+    await update.message.reply_text(f"✅ User `{text}` ko unban kar diya gaya hai.\nMenu ke liye /menu dabayein.", parse_mode="Markdown")
+    return ConversationHandler.END
 
 
 # =========================================================================
@@ -1138,65 +1185,3 @@ async def stopboost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or not context.args[0].isdigit(): return
     db.deactivate_boost_job(int(context.args[0]))
     await update.effective_message.reply_text("✅ Boost job rok diya gaya.")
-
-async def besttime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    hours = db.get_best_posting_hours(update.effective_chat.id)
-    lines = ["⏰ *Best Posting Times*\n"] + [f"• {h%12 or 12}:00 {'AM' if h<12 else 'PM'} — {c} activities" for h, c in hours]
-    await update.effective_message.reply_text("\n".join(lines) if hours else "Data nahi hai.", parse_mode="Markdown")
-
-async def adddirectory_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📋 Title likho (jaise: Physics Study Group):\n(Cancel ke liye /cancel)")
-    return ASK_DIR_TITLE
-
-async def adddirectory_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["dir_title"] = update.message.text.strip()
-    await update.effective_message.reply_text("📝 Chhoti si description likho:")
-    return ASK_DIR_DESC
-
-async def adddirectory_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["dir_desc"] = update.message.text.strip()
-    await update.effective_message.reply_text("🏷 Category likho (jaise: Education, Motivation):")
-    return ASK_DIR_CATEGORY
-
-async def adddirectory_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["dir_category"] = update.message.text.strip()
-    await update.effective_message.reply_text("🔗 Invite link bhejo (https://...):")
-    return ASK_DIR_LINK
-
-async def adddirectory_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry_id = db.add_directory_entry(context.user_data["dir_title"], context.user_data["dir_desc"], 
-                                      context.user_data["dir_category"], update.message.text.strip(), update.effective_user.id)
-    await update.effective_message.reply_text(f"✅ Directory me add ho gaya! (#{entry_id})\nMenu ke liye /menu dabayein.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def removedirectory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_admin(update): return
-    
-    categories = db.get_directory_categories()
-    if not categories:
-        await update.effective_message.reply_text("❌ Directory abhi khali hai.")
-        return
-        
-    kb = []
-    text = "📋 *Directory Entries:*\n_Jise delete karna hai uske button par click karein!_\n\n"
-    for c in categories:
-        entries = db.get_directory_entries(c)
-        for e in entries:
-            text += f"📁 {c} ➞ {e['title']}\n"
-            kb.append([InlineKeyboardButton(f"🗑 Delete: {e['title'][:20]}", callback_data=f"deldir_{e['entry_id']}")])
-
-    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="menu_admin")])
-    await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-async def deldir_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id): return
-
-    entry_id = int(query.data.split("_")[1])
-    db.deactivate_directory_entry(entry_id)
-    await query.edit_message_text(f"✅ Directory entry #{entry_id} hata di gayi hai!")
