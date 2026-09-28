@@ -18,7 +18,6 @@ import config
 from utils.permissions import require_admin, require_owner, is_admin, is_owner
 from utils.docx_parser import parse_docx, validate_parsed
 from utils.exporters import make_sample_template, export_questions_to_docx
-from utils.pdf_cleaner import clean_pdf
 from utils.html_notes import sanitize_for_telegram, chunk_message
 
 # Conversation states
@@ -150,7 +149,6 @@ async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.remove_admin(int(context.args[0]))
     await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin nahi hai.")
 
-# Ye function miss ho gaya tha, ise wapas add kar diya gaya hai!
 async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await manage_admins_menu(update, context)
 
@@ -757,23 +755,6 @@ async def notesend_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if not is_admin(query.from_user.id): return
     await query.message.reply_text(f"Group me bhejne ke liye likho:\n`/pushnote {query.data.split('_')[1]} <chat_id>`", parse_mode="Markdown")
-
-async def handle_pdf_clean_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
-    if not doc.file_name.lower().endswith(".pdf"): return
-    status = await update.message.reply_text("⏳ PDF clean kar raha hoon...")
-    file = await context.bot.get_file(doc.file_id)
-    in_path, out_path = f"/tmp/in_{doc.file_unique_id}.pdf", f"/tmp/out_{doc.file_unique_id}.pdf"
-    await file.download_to_drive(in_path)
-    ok, msg = clean_pdf(in_path, out_path)
-    if not ok:
-        await status.edit_text(f"❌ Clean nahi ho paya: {msg}")
-    else:
-        db.log_pdf_job(update.effective_user.id, doc.file_name, "clean")
-        await update.message.reply_document(document=open(out_path, "rb"), filename=f"cleaned_{doc.file_name}", caption="✅ Clean ho gaya!")
-        await status.delete()
-    for p in (in_path, out_path):
-        if os.path.exists(p): os.remove(p)
 
 async def reactions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
