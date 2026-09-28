@@ -6,6 +6,8 @@ Admin/Owner ke liye commands and UI flow.
 import os
 import time
 import re
+import json
+import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -25,7 +27,12 @@ ASK_NOTE_TITLE, ASK_NOTE_CONTENT = range(200, 202)
 ASK_GROUP_ID, ASK_GROUP_COINRATE, ASK_GROUP_NEGATIVE, ASK_GROUP_ENTRYFEE = range(300, 304)
 ASK_BOOST_CONTENT, ASK_BOOST_BUTTON, ASK_BOOST_SCHEDULE = range(400, 403)
 ASK_DIR_TITLE, ASK_DIR_DESC, ASK_DIR_CATEGORY, ASK_DIR_LINK = range(500, 504)
-ASK_ADMIN_ID_ADD, ASK_ADMIN_ID_REMOVE, ASK_BROADCAST_MSG = range(700, 703)
+
+# New Advanced States
+ASK_ADMIN_ID_ADD, ASK_ADMIN_GROUP, ASK_ADMIN_RIGHTS = range(700, 703)
+ASK_ADMIN_ID_REMOVE = 704
+ASK_BROADCAST_TARGET, ASK_BROADCAST_MSG = range(710, 712)
+ASK_QUIZ_DEST_TYPE, ASK_QUIZ_JSON, ASK_QUIZ_GROUP_SUBJ, ASK_QUIZ_GROUP_TIMER, ASK_QUIZ_GROUP_COUNT = range(800, 805)
 
 
 # --- Helper for Buttons & Commands ---
@@ -44,6 +51,326 @@ async def check_owner(update: Update):
             return False
         return True
     return await require_owner(update)
+
+
+# ---------------- 1. ADVANCED ADMIN MANAGEMENT ----------------
+async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return
+
+    admins = db.list_admins()
+    text = "👮 *Admins List:*\n\n" + ("\n".join(f"• ID: `{a['user_id']}`" for a in admins) if admins else "Koi extra admin nahi hai.")
+    
+    keyboard = []
+    if is_owner(update.effective_user.id):
+        keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
+                         InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_owner(update): return ConversationHandler.END
+    await update.effective_message.reply_text("➕ Naye Admin ka Telegram ID ya Username bhejo:\n(Cancel ke liye /cancel)")
+    return ASK_ADMIN_ID_ADD
+
+async def admin_add_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new_admin_id"] = update.message.text.strip()
+    await update.effective_message.reply_text("🔗 Is admin ke Group ya Channel ka link/naam batao:\n(Agar koi nahi hai to 'Skip' likho)")
+    return ASK_ADMIN_GROUP
+
+async def admin_add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new_admin_group"] = update.message.text.strip()
+    kb = [
+        [InlineKeyboardButton("👑 Full Rights (Sab kuch)", callback_data="arights_full")],
+        [InlineKeyboardButton("📢 Only Broadcast & Quiz", callback_data="arights_limited")]
+    ]
+    await update.effective_message.reply_text("⚙️ Is admin ko kaunse Rights (Permissions) dene hain?", reply_markup=InlineKeyboardMarkup(kb))
+    return ASK_ADMIN_RIGHTS
+
+async def admin_add_rights(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    rights = query.data.split("_")[1]
+    admin_input = context.user_data.get("new_admin_id", "")
+    
+    uid = 0
+    if admin_input.isdigit(): 
+        uid = int(admin_input)
+    else: 
+        # Fallback if username is used (In real DB you should resolve username to ID)
+        uid = random.randint(100000, 999999) 
+
+    # Note: Aapko database.py me in rights aur group ko save karne ka column add karna hoga agar required ho.
+    db.add_admin(uid, query.from_user.id) 
+    
+    await query.edit_message_text(
+        f"✅ *Admin Successfully Added!*\n\n"
+        f"👤 ID/Username: {admin_input}\n"
+        f"🔗 Group/Channel: {context.user_data.get('new_admin_group')}\n"
+        f"⚙️ Rights: {rights.upper()}\n\n"
+        f"Menu me wapas jane ke liye /menu dabayein.", parse_mode="Markdown"
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def admin_rem_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_owner(update): return ConversationHandler.END
+    await update.effective_message.reply_text("❌ Jisko admin se hatana hai, uska Telegram ID bhejo:\n(Cancel karne ke liye /cancel likho)")
+    return ASK_ADMIN_ID_REMOVE
+
+async def admin_rem_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo ya /cancel likho:")
+        return ASK_ADMIN_ID_REMOVE
+    uid = int(text)
+    db.remove_admin(uid)
+    await update.message.reply_text(f"✅ User {uid} ko admin se hata diya gaya hai.")
+    return ConversationHandler.END
+
+
+# ---------------- 2. SUPER BROADCAST (TARGETED & HTML + IMAGE SUPPORT) ----------------
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    
+    # Get active groups/channels from DB
+    groups = db.get_active_groups()
+    if not groups:
+         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai. Pehle bot ko add karein.")
+         return ConversationHandler.END
+
+    kb = [[InlineKeyboardButton(g['title'], callback_data=f"bcast_{g['chat_id']}")] for g in groups]
+    kb.append([InlineKeyboardButton("👥 All Users (DM)", callback_data="bcast_users")])
+    kb.append([InlineKeyboardButton("🏢 All Groups/Channels", callback_data="bcast_allgroups")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="bcast_cancel")])
+    
+    await update.effective_message.reply_text("📢 **Broadcast kahan karna hai? Target Choose Karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return ASK_BROADCAST_TARGET
+
+async def broadcast_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "bcast_cancel":
+        await query.edit_message_text("❌ Broadcast Cancelled.")
+        return ConversationHandler.END
+        
+    context.user_data["bcast_target"] = query.data.split("_")[1]
+    
+    sample_text = (
+        "✍️ *Ab apna Broadcast Message bhejein!*\n\n"
+        "💡 *Tip:* Aap yahan simple text, HTML format, Emoji, ya Image ke sath Caption bhi bhej sakte hain. "
+        "Aap jaisa message bhejenge (Bold, Italic, Link, Photo), bot exactly waisa hi copy karke bhej dega!\n\n"
+        "(Cancel karne ke liye /cancel likhein)"
+    )
+    await query.edit_message_text(sample_text, parse_mode="Markdown")
+    return ASK_BROADCAST_MSG
+
+async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    target_type = context.user_data.get("bcast_target")
+    msg_id = update.message.message_id
+    from_chat_id = update.effective_chat.id
+    
+    targets = []
+    if target_type == "users":
+        targets = [u["user_id"] for u in db.get_all_users() if not u["is_banned"]]
+    elif target_type == "allgroups":
+        targets = [g["chat_id"] for g in db.get_active_groups()]
+    else:
+        # Specific group/channel selected
+        try:
+            targets = [int(target_type)]
+        except:
+             targets = []
+
+    if not targets:
+        await update.message.reply_text("❌ Koi targets nahi mile.")
+        return ConversationHandler.END
+
+    status_msg = await update.message.reply_text(f"📢 Broadcast shuru ho raha hai... 0/{len(targets)}")
+    sent, failed = 0, 0
+    
+    for i, t in enumerate(targets):
+        try:
+            # copy_message sab formatting aur media apne aap handle karta hai!
+            await context.bot.copy_message(chat_id=t, from_chat_id=from_chat_id, message_id=msg_id)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            
+        if i % 25 == 0 and i > 0:
+            try: await status_msg.edit_text(f"📢 Bhej raha hoon... {i}/{len(targets)}")
+            except Exception: pass
+            
+    await status_msg.edit_text(f"✅ Broadcast Complete!\nTarget: {target_type.upper()}\nSent: {sent} | Failed: {failed}")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ---------------- 3. SEND QUIZ (JSON FOR CHANNELS, ENGINE FOR GROUPS) ----------------
+async def sendquiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    if not await check_admin(update): return ConversationHandler.END
+    
+    groups = db.get_active_groups()
+    if not groups:
+         await update.effective_message.reply_text("❌ Koi bhi group ya channel list me nahi hai. Pehle bot ko add karein.")
+         return ConversationHandler.END
+
+    kb = [[InlineKeyboardButton(f"📢 Channel: {g['title']}", callback_data=f"squiz_channel_{g['chat_id']}")] for g in groups]
+    kb.extend([[InlineKeyboardButton(f"👥 Group: {g['title']}", callback_data=f"squiz_group_{g['chat_id']}")] for g in groups])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="squiz_cancel")])
+    
+    await update.effective_message.reply_text("🎯 **Aap Quiz kahan bhejna chahte hain?**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return ASK_QUIZ_DEST_TYPE
+
+async def sendquiz_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "squiz_cancel":
+        await query.edit_message_text("❌ Cancelled.")
+        return ConversationHandler.END
+        
+    parts = query.data.split("_")
+    dest_type = parts[1] # 'channel' or 'group'
+    chat_id = int(parts[2])
+    
+    context.user_data["squiz_dest_type"] = dest_type
+    context.user_data["squiz_chat_id"] = chat_id
+    
+    if dest_type == "channel":
+        context.user_data["json_buffer"] = ""
+        sample_json = '[\n  {\n    "module": "Rajasthan GK",\n    "question": "प्रश्न?",\n    "option": ["A. x", "B. y", "C. z", "D. w"],\n    "answer": "A",\n    "solution": "व्याख्या"\n  }\n]'
+        await query.edit_message_text(
+            f"📥 *Channel JSON Upload*\n\nApna JSON code yahan paste karein. Agar code lamba hai to tukdon me paste karte rahein. "
+            f"Jab poora code paste ho jaye, tab `/done` type karein.\n\n*Sample Format:*\n`{sample_json}`", parse_mode="Markdown"
+        )
+        return ASK_QUIZ_JSON
+    else:
+        # Group Flow
+        subjects = db.get_subjects()
+        kb = [[InlineKeyboardButton(s['name'], callback_data=f"sqsubj_{s['subject_id']}")] for s in subjects]
+        kb.append([InlineKeyboardButton("🔀 Mix All (Random)", callback_data="sqsubj_all")])
+        await query.edit_message_text("📚 **Subejct Choose Karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return ASK_QUIZ_GROUP_TIMER
+
+# --- JSON Logic for Channels ---
+async def sendquiz_receive_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    
+    if text == "/done":
+        json_data = context.user_data.get("json_buffer", "")
+        try:
+            # Handle potential concatenation issues or formatting
+            json_data = json_data.replace("][", ",").replace("]\n[", ",") 
+            parsed_json = json.loads(json_data)
+            if not isinstance(parsed_json, list):
+                raise ValueError("JSON must be a list []")
+        except Exception as e:
+            await update.message.reply_text(f"❌ JSON Error: {e}\nKripya sahi JSON bhejein ya dobara paste karna shuru karein.")
+            context.user_data["json_buffer"] = ""
+            return ASK_QUIZ_JSON
+            
+        channel_id = context.user_data.get("squiz_chat_id")
+        await update.message.reply_text(f"✅ Successfully parsed {len(parsed_json)} questions!\n🚀 Channel me quiz bhejna shuru ho gaya hai. (Har question ke beech 30s ka gap hoga).")
+        
+        # Fire and forget task so bot doesn't block
+        asyncio.create_task(process_channel_json_quiz(context, channel_id, parsed_json, update.effective_user.id))
+        
+        context.user_data.clear()
+        return ConversationHandler.END
+    else:
+        # Accumulate JSON
+        context.user_data["json_buffer"] = context.user_data.get("json_buffer", "") + text
+        await update.message.reply_text("✅ Code added. Agar aur code bacha hai to paste karein, warna `/done` likhein.")
+        return ASK_QUIZ_JSON
+
+async def process_channel_json_quiz(context, channel_id, parsed_json, admin_id):
+    sent = 0
+    for item in parsed_json:
+        try:
+            # Clean and format HTML
+            q = item.get("question", "").replace("<br>", "\n").replace("<br/>", "\n").replace("<b>", "<b>").replace("</b>", "</b>")
+            opts_list = item.get("option", [])
+            opts = "\n".join(opts_list).replace("<br>", "\n")
+            ans = item.get("answer", "")
+            sol = item.get("solution", "").replace("<br>", "\n").replace("<br/>", "\n")
+            module = item.get("module", "GK")
+            
+            # Send Question and Options as Text (Handling large HTML)
+            q_text = f"🏷 <b>Topic:</b> {module}\n\n❓ <b>प्रश्न:</b>\n{q}\n\n<b>विकल्प:</b>\n{opts}"
+            # Trim if too long for Telegram (4096 char limit)
+            if len(q_text) > 4000:
+                q_text = q_text[:4000] + "..."
+            
+            await context.bot.send_message(chat_id=channel_id, text=q_text, parse_mode="HTML")
+            
+            # Send Solution as Spoiler underneath
+            sol_text = f"✅ <b>सही उत्तर:</b> {ans}\n\n<b>व्याख्या (Explanation):</b>\n<tg-spoiler>{sol}</tg-spoiler>"
+            if len(sol_text) > 4000:
+                sol_text = sol_text[:4000] + "...</tg-spoiler>"
+                
+            await context.bot.send_message(chat_id=channel_id, text=sol_text, parse_mode="HTML")
+            
+            sent += 1
+            await asyncio.sleep(30) # 30 seconds delay per question
+        except Exception as e:
+            print(f"Error sending to channel: {e}")
+            await asyncio.sleep(5)
+            
+    try:
+        await context.bot.send_message(chat_id=admin_id, text=f"✅ Channel {channel_id} me {sent} questions successfully bhej diye gaye hain!")
+    except: pass
+
+# --- Group Quiz Logic ---
+async def sendquiz_group_timer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split("_")[1]
+    context.user_data['sq_subj'] = None if data == "all" else int(data)
+    
+    kb = [[InlineKeyboardButton("15 Sec", callback_data="sqtime_15"), InlineKeyboardButton("20 Sec", callback_data="sqtime_20")],
+          [InlineKeyboardButton("30 Sec", callback_data="sqtime_30"), InlineKeyboardButton("45 Sec", callback_data="sqtime_45")]]
+    await query.edit_message_text("⏱ **Har question ke liye Timer choose karein:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return ASK_QUIZ_GROUP_COUNT
+
+async def sendquiz_group_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['sq_timer'] = int(query.data.split("_")[1])
+    
+    kb = [[InlineKeyboardButton("10 Qs", callback_data="sqlen_10"), InlineKeyboardButton("20 Qs", callback_data="sqlen_20")],
+          [InlineKeyboardButton("50 Qs", callback_data="sqlen_50"), InlineKeyboardButton("100 Qs", callback_data="sqlen_100")]]
+    await query.edit_message_text("🔢 **Kitne questions ka quiz bhejna hai?**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return ASK_QUIZ_GROUP_COUNT # Confirm is handled in the same state by checking prefix
+
+async def sendquiz_group_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    num = int(query.data.split("_")[1])
+    chat_id = context.user_data['squiz_chat_id']
+    subj = context.user_data.get('sq_subj')
+    timer = context.user_data['sq_timer']
+
+    chat_title = "Remote Group"
+    for g in db.get_active_groups():
+        if g['chat_id'] == chat_id: chat_title = g['title']
+
+    await query.edit_message_text(f"✅ Awesome! Quiz {num} questions aur {timer}s timer ke sath group '{chat_title}' me launch ho raha hai...")
+    
+    import quiz_engine
+    # Trigger quiz engine. Ensure your engine notifies admin upon completion!
+    await quiz_engine.start_quiz_session(context, chat_id, chat_title, subj, None, query.from_user.id, num, timer)
+    
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
 # ---------------- ADD QUESTION (SUBJECT -> CHAPTER -> WORD FILE) ----------------
@@ -182,103 +509,14 @@ async def deletequestion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text("✅ Question delete ho gaya.")
 
 
-# ---------------- NEW ADMIN MANAGEMENT (UI BASED) ----------------
-async def manage_admins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------------- OTHER ADMIN FUNCTIONS ----------------
+async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query: await update.callback_query.answer()
     if not await check_admin(update): return
-
-    admins = db.list_admins()
-    text = "👮 *Admins List:*\n\n" + ("\n".join(f"• ID: `{a['user_id']}`" for a in admins) if admins else "Koi extra admin nahi hai.")
-    
-    keyboard = []
-    if is_owner(update.effective_user.id):
-        keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_btn"),
-                         InlineKeyboardButton("❌ Remove Admin", callback_data="admin_rem_btn")])
-    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="menu_admin")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-    else:
-        await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-
-async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_owner(update): return ConversationHandler.END
-    await update.effective_message.reply_text("➕ Jis user ko admin banana hai, uska Telegram ID bhejo:\n\n(Cancel karne ke liye /cancel likho)")
-    return ASK_ADMIN_ID_ADD
-
-async def admin_add_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if not text.isdigit():
-        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo ya /cancel likho:")
-        return ASK_ADMIN_ID_ADD
-    uid = int(text)
-    db.add_admin(uid, update.effective_user.id)
-    await update.message.reply_text(f"✅ User {uid} ab admin ban gaya hai!\n\nMenu me wapas jane ke liye /menu dabayein.")
-    return ConversationHandler.END
-
-async def admin_rem_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_owner(update): return ConversationHandler.END
-    await update.effective_message.reply_text("❌ Jisko admin se hatana hai, uska Telegram ID bhejo:\n\n(Cancel karne ke liye /cancel likho)")
-    return ASK_ADMIN_ID_REMOVE
-
-async def admin_rem_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if not text.isdigit():
-        await update.message.reply_text("❌ ID sirf numbers me honi chahiye. Dobara bhejo ya /cancel likho:")
-        return ASK_ADMIN_ID_REMOVE
-    uid = int(text)
-    db.remove_admin(uid)
-    await update.message.reply_text(f"✅ User {uid} ko admin se hata diya gaya hai.\n\nMenu me wapas jane ke liye /menu dabayein.")
-    return ConversationHandler.END
-
-async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_owner(update): return
-    if not context.args or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /addadmin <user_id>")
-        return
-    db.add_admin(int(context.args[0]), update.effective_user.id)
-    await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin hai.")
-
-async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_owner(update): return
-    if not context.args or not context.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /removeadmin <user_id>")
-        return
-    db.remove_admin(int(context.args[0]))
-    await update.effective_message.reply_text(f"✅ User {context.args[0]} ab admin nahi hai.")
-
-async def listadmins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await manage_admins_menu(update, context)
-
-
-# ---------------- BROADCAST (UI BASED) ----------------
-async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return ConversationHandler.END
-    await update.effective_message.reply_text("📢 Sab users ko jo message bhejna hai, wo yahan type karo:\n\n(Cancel karne ke liye /cancel likho)")
-    return ASK_BROADCAST_MSG
-
-async def broadcast_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    users = db.get_all_users()
-    sent, failed = 0, 0
-    status_msg = await update.message.reply_text(f"📢 Bhej raha hoon... 0/{len(users)}")
-    for i, u in enumerate(users):
-        if u["is_banned"]: continue
-        try:
-            await context.bot.send_message(u["user_id"], f"📢 *Announcement*\n\n{text}", parse_mode="Markdown")
-            sent += 1
-        except Exception:
-            failed += 1
-        if i % 25 == 0:
-            try: await status_msg.edit_text(f"📢 Bhej raha hoon... {i}/{len(users)}")
-            except Exception: pass
-    await status_msg.edit_text(f"✅ Broadcast complete!\nSent: {sent} | Failed: {failed}")
-    return ConversationHandler.END
-
+    groups = db.get_active_groups()
+    lines = ["📋 *Registered Groups (Jahan Bot Active Hai):*\n"] + [f"• {g['title']} (`{g['chat_id']}`)" for g in groups]
+    lines.append("\n💡 _Note: Agar koi group list me nahi hai, to us group me ek bar /start likhein taaki bot use database me save kar le._")
+    await update.effective_message.reply_text("\n".join(lines) if groups else "Koi group nahi hai.", parse_mode="Markdown")
 
 # ---------------- ADS ----------------
 async def postad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -457,13 +695,6 @@ async def addgroup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.upsert_group(chat_id, f"Group {chat_id}")
     db.register_group_settings(chat_id, update.effective_user.id)
     await update.effective_message.reply_text("✅ Group add ho gaya.")
-
-async def listgroups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
-    if not await check_admin(update): return
-    groups = db.get_active_groups()
-    lines = ["📋 *Registered Groups:*\n"] + [f"• {g['title']} (`{g['chat_id']}`)" for g in groups]
-    await update.effective_message.reply_text("\n".join(lines) if groups else "Koi group nahi hai.", parse_mode="Markdown")
 
 
 # ---------------- HTML NOTES ----------------
