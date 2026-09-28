@@ -45,22 +45,39 @@ async def stop_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id):
 # ==========================================
 async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, subject_id, chapter_id, user_id, num_questions, custom_timer=None):
     if is_quiz_active(chat_id):
-        await context.bot.send_message(chat_id, "⚠️ यहाँ पहले से एक क्विज़ चल रहा है या शुरू होने वाला है!")
+        try:
+            await context.bot.send_message(chat_id, "⚠️ यहाँ पहले से एक क्विज़ चल रहा है या शुरू होने वाला है!")
+        except Exception:
+            await context.bot.send_message(user_id, "❌ ग्रुप में मैसेज नहीं भेज सका। क्या बॉट को ग्रुप में परमिशन है?")
         return
 
-    all_q_rows = db.get_questions()
+    try:
+        all_q_rows = db.get_questions()
+    except Exception as e:
+        await context.bot.send_message(user_id, f"❌ Database se questions nikalne me error: {e}")
+        return
+
     filtered_q = []
     for row in all_q_rows:
-        # 🛠 FIX: Convert sqlite3.Row to standard dict instantly
-        q = dict(row)
-        if subject_id and q.get('subject_id') != subject_id: 
+        try:
+            q = dict(row) if not isinstance(row, dict) else row
+        except Exception:
             continue
-        if chapter_id and q.get('chapter_id') != chapter_id: 
+            
+        q_subj = str(q.get('subject_id', ''))
+        q_chap = str(q.get('chapter_id', ''))
+        
+        if subject_id and q_subj != str(subject_id): 
+            continue
+        if chapter_id and q_chap != str(chapter_id): 
             continue
         filtered_q.append(q)
 
     if not filtered_q:
-        await context.bot.send_message(chat_id, "❌ इस टॉपिक के लिए पर्याप्त सवाल नहीं हैं।")
+        try:
+            await context.bot.send_message(chat_id, "❌ इस टॉपिक के लिए पर्याप्त सवाल नहीं हैं।")
+        except Exception:
+            await context.bot.send_message(user_id, "❌ इस टॉपिक के लिए Database में कोई सवाल नहीं मिला!")
         return
 
     random.shuffle(filtered_q)
@@ -88,7 +105,11 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         InlineKeyboardButton("🚀 Join Quiz (0/5)", callback_data=f"ready_{chat_id}")
     ]])
 
-    msg = await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
+    try:
+        msg = await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
+    except Exception as e:
+        await context.bot.send_message(user_id, f"❌ Quiz UI ग्रुप में नहीं जा सका! Error: {e}")
+        return
 
     ready_sessions[chat_id] = {
         "ready_users": set(),
@@ -96,7 +117,8 @@ async def start_quiz_session(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_t
         "chat_title": chat_title,
         "questions": questions_to_ask,
         "timer": timer,
-        "status": "waiting"
+        "status": "waiting",
+        "admin_id": user_id
     }
 
 
@@ -123,15 +145,14 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             pass
         
-        await context.bot.send_message(
-            chat_id, 
-            "🔥 *Admin ने क्विज़ स्टार्ट कर दिया है! पहला सवाल आ रहा है...*", 
-            parse_mode="Markdown"
-        )
+        try:
+            await context.bot.send_message(chat_id, "🔥 *Admin ने क्विज़ स्टार्ट कर दिया है! पहला सवाल आ रहा है...*", parse_mode="Markdown")
+        except Exception:
+            pass
         
         if chat_id in ready_sessions:
             q_data = ready_sessions.pop(chat_id)
-            asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"]))
+            asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"], q_data["admin_id"]))
         return
 
     # 👥 NORMAL USER LOGIC
@@ -158,22 +179,21 @@ async def handle_ready_callback(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             pass
         
-        await context.bot.send_message(
-            chat_id, 
-            "🔥 *5 लोग जुड़ चुके हैं! क्विज़ ठीक 1 मिनट में शुरू होगा...*\n\nतैयार रहें!", 
-            parse_mode="Markdown"
-        )
-        
+        try:
+            await context.bot.send_message(chat_id, "🔥 *5 लोग जुड़ चुके हैं! क्विज़ ठीक 1 मिनट में शुरू होगा...*\n\nतैयार रहें!", parse_mode="Markdown")
+        except Exception:
+            pass
+            
         await asyncio.sleep(60)
         
         if chat_id in ready_sessions:
             q_data = ready_sessions.pop(chat_id)
-            asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"]))
+            asyncio.create_task(run_quiz(context, chat_id, q_data["chat_title"], q_data["questions"], q_data["timer"], q_data["admin_id"]))
 
 # ==========================================
 # 2. RUN QUIZ & POLL SCORING
 # ==========================================
-async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, questions, timer):
+async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, questions, timer, admin_id):
     active_quizzes[chat_id] = {
         "running": True, 
         "scores": {}, 
@@ -213,6 +233,8 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
             if isinstance(raw_opts, list):
                 for opt in raw_opts:
                     opt_str = re.sub(r'<[^>]+>', '', str(opt)).strip()
+                    # 🔥 FIX: Remove ###A, ###B formatting from options
+                    opt_str = re.sub(r'^###[A-D]\s*', '', opt_str).strip()
                     if len(opt_str) > 100:
                         opt_str = opt_str[:97] + "..."
                     if opt_str:
@@ -281,7 +303,10 @@ async def run_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, ques
                     await asyncio.sleep(1.5)
                 except Exception as inner_e:
                     logger.error(f"Fallback also failed: {inner_e}")
-                    await context.bot.send_message(chat_id, f"⚠️ Q{idx+1} लोड नहीं हो सका। अगले प्रश्न पर जा रहे हैं...")
+                    try:
+                        await context.bot.send_message(chat_id, f"⚠️ Q{idx+1} लोड नहीं हो सका। अगले प्रश्न पर जा रहे हैं...")
+                    except:
+                        pass
                     await asyncio.sleep(2)
 
         except Exception as giant_e:
@@ -330,7 +355,10 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ==========================================
 async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, chat_title, scores_dict):
     if not scores_dict:
-        await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी हिस्सा नहीं लिया।")
+        try:
+            await context.bot.send_message(chat_id, "📝 क्विज़ समाप्त! किसी ने भी हिस्सा नहीं लिया।")
+        except Exception:
+            pass
         return
 
     sorted_users = sorted(scores_dict.values(), key=lambda x: x["score"], reverse=True)
@@ -341,7 +369,10 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
         medal = medals[i] if i < 5 else '🔹'
         text += f"{medal} {u['name']} - {u['score']} Points\n"
     
-    await context.bot.send_message(chat_id, text, parse_mode="Markdown")
+    try:
+        await context.bot.send_message(chat_id, text, parse_mode="Markdown")
+    except Exception:
+        pass
 
     try:
         pdf = FPDF()
@@ -383,7 +414,10 @@ async def generate_and_send_pdf(context: ContextTypes.DEFAULT_TYPE, chat_id, cha
             os.remove(file_path)
     except Exception as e:
         logger.error(f"PDF Error: {e}")
-        await context.bot.send_message(chat_id, "⚠️ Leaderboard PDF generate karne me error aayi.")
+        try:
+            await context.bot.send_message(chat_id, "⚠️ Leaderboard PDF generate karne me error aayi.")
+        except Exception:
+            pass
 
 
 async def start_duel(*args, **kwargs):
