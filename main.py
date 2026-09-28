@@ -301,6 +301,17 @@ def build_app():
         allow_reentry=True
     ))
 
+    # Catch-all admin menu router for admin callbacks not handled above.
+    async def admin_menu_router(update: Update, context):
+        query = update.callback_query
+        if not query:
+            return
+        data = query.data or ""
+        if data == "amenu_reactions":
+            await ah.reactions_cmd(update, context)
+            return
+        await query.answer()
+        logger.warning("Unhandled admin menu callback: %s", data)
     app.add_handler(CallbackQueryHandler(admin_menu_router, pattern=r"^amenu_"))
 
     app.add_handler(CallbackQueryHandler(uh.subject_selected, pattern=r"^qsubj_"))
