@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    PollAnswerHandler, ConversationHandler, ChatMemberHandler, filters
+    PollAnswerHandler, ConversationHandler, TypeHandler, filters
 )
 from telegram.warnings import PTBUserWarning
 
@@ -50,10 +50,27 @@ def keep_alive_server():
     except OSError:
         pass
 
-async def track_group_membership(update: Update, context):
+
+# =========================================================================
+# 🚀 NAYA GLOBAL TRACKER (100% AUTOMATIC GROUP/CHANNEL FETCHING)
+# =========================================================================
+async def global_tracker(update: Update, context):
+    """
+    Ye tracker Telegram se aane wale har ek signal (Message, Command, Channel Post, Button Click) 
+    par chalega. Jaise hi us group ya channel se koi bhi connection banega, bot usko save kar lega.
+    """
     chat = update.effective_chat
-    if chat.type in ("group", "supergroup", "channel"):
+    # Agar chat Group, Supergroup ya Channel hai, to turant database me daalo
+    if chat and chat.type in ("group", "supergroup", "channel"):
         db.upsert_group(chat.id, chat.title)
+
+    user = update.effective_user
+    # User ka record bhi update karo (Channels me user nahi hota isliye check lagaya hai)
+    if user and not user.is_bot:
+        db.upsert_user(user.id, user.username, user.first_name)
+        db.touch_online(user.id)
+# =========================================================================
+
 
 async def run_due_boost_jobs(context):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -70,12 +87,6 @@ async def run_due_boost_jobs(context):
         except Exception:
             db.deactivate_boost_job(job["job_id"])
 
-async def track_user_activity(update: Update, context):
-    if update.effective_user:
-        user = update.effective_user
-        db.upsert_user(user.id, user.username, user.first_name)
-        db.touch_online(user.id)
-
 async def admin_menu_router(update: Update, context):
     query = update.callback_query
     await query.answer()
@@ -91,8 +102,8 @@ def build_app():
     db.init_db()
     app = Application.builder().token(config.BOT_TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, track_user_activity), group=-1)
-    app.add_handler(ChatMemberHandler(track_group_membership, ChatMemberHandler.MY_CHAT_MEMBER), group=-1)
+    # 🚀 Global Tracker ko sabse pehle (group=-1) lagaya gaya hai
+    app.add_handler(TypeHandler(Update, global_tracker), group=-1)
 
     app.add_handler(CommandHandler("start", uh.start_cmd))
     app.add_handler(CommandHandler("menu", uh.menu_cmd))
@@ -111,7 +122,7 @@ def build_app():
     app.add_handler(CommandHandler("subjects", uh.subjects_cmd))
 
     # ==============================================================
-    # PDF CLEANER (USER FLOW) - Added BEFORE menu_router
+    # PDF CLEANER (USER FLOW)
     # ==============================================================
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(uh.cleanpdf_start, pattern=r"^menu_cleanpdf$"), CommandHandler("cleanpdf", uh.cleanpdf_start)],
